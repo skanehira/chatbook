@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vite-plus/test";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, afterEach, vi } from "vite-plus/test";
+import { render, screen, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider, createStore } from "jotai";
 import { ChatArea } from "./ChatArea";
+import { doneEvent, streamingFetchStub, tokenEvent } from "../../../test/streamingFetchStub";
 import {
   activeSelectionAtom,
   chatAbortControllerAtom,
@@ -52,6 +53,46 @@ function renderChat(options: { activeSelection?: ActiveSelection | null } = {}) 
 }
 
 describe("ChatArea", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the question at once, then the answer as it streams in", async () => {
+    // ChatArea's own fetch stands in for the chat endpoint, so the question
+    // going through useChatStream — what makes it appear before the model
+    // answers — is exercised rather than assumed.
+    const { fetchFn, calls } = streamingFetchStub();
+    vi.stubGlobal("fetch", fetchFn);
+    renderChat();
+
+    await userEvent.type(screen.getByPlaceholderText("質問を入力..."), "この段落を一言で要約して");
+    await userEvent.keyboard("{Enter}");
+
+    // The question and the wait are on screen before a single token arrives
+    expect(screen.getByText("この段落を一言で要約して")).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent(/^考え中…$/);
+
+    await act(async () => {
+      calls[0].emit(tokenEvent("要約すると"));
+    });
+    await waitFor(() => expect(screen.getByText("要約すると")).toBeVisible());
+    expect(screen.queryByRole("status")).toBeNull();
+
+    await act(async () => {
+      calls[0].emit(tokenEvent("、選択の話です。"));
+      calls[0].emit(doneEvent("m1"));
+      calls[0].end();
+    });
+
+    await waitFor(() => expect(screen.getByText("要約すると、選択の話です。")).toBeVisible());
+    expect(calls.map((call) => [call.url, call.body])).toEqual([
+      [
+        "/api/pdf/p1/selections/s1/chats",
+        { content: "この段落を一言で要約して", useWebSearch: true },
+      ],
+    ]);
+  });
+
   it("shows the selected passage the question is about", () => {
     renderChat();
 
