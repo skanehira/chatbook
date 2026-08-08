@@ -12,9 +12,6 @@ export const activeSelectionAtom = atom<ActiveSelection | null>(null);
 export const chatMessagesAtom = atom<ChatMessage[]>([]);
 export const streamingContentAtom = atom<string>("");
 export const isStreamingAtom = atom<boolean>(false);
-// Web search is on by default: the assistant should fall back to the web when
-// the document alone cannot answer the question.
-export const useWebSearchAtom = atom<boolean>(true);
 
 /** Shared, so leaving a chat can stop an answer any of the panels started. */
 export const chatAbortControllerAtom = atom<AbortController | null>(null);

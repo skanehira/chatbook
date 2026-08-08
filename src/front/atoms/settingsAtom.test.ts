@@ -2,6 +2,21 @@ import { describe, it, expect, vi, afterEach } from "vite-plus/test";
 import { createStore } from "jotai";
 
 const STORAGE_KEY = "chatbook:keybindings";
+const WEB_SEARCH_KEY = "chatbook:web-search";
+
+/**
+ * Whether the assistant would search the web, given what the last session left
+ * in storage. The reader builds a fresh jotai store for every book it opens, so
+ * a setting that only lived in the store would go back to its default each
+ * time; this is the same question asked of a brand new store.
+ */
+async function restoredWebSearch(stored: string) {
+  localStorage.clear();
+  localStorage.setItem(WEB_SEARCH_KEY, stored);
+  vi.resetModules();
+  const { useWebSearchAtom } = await import("./settingsAtom");
+  return createStore().get(useWebSearchAtom);
+}
 
 /**
  * The mode the reader starts a session with, given what the last one left in
@@ -91,5 +106,25 @@ describe("keybindingModeAtom", () => {
 
     expect(session.mode()).toBe("vim");
     session.unmount();
+  });
+});
+
+describe("useWebSearchAtom", () => {
+  it.each([
+    { holds: "the setting turned off in a previous session", stored: "false", starts: false },
+    { holds: "the setting turned back on", stored: "true", starts: true },
+    { holds: "nothing this reader wrote", stored: JSON.stringify("yes"), starts: true },
+  ])("starts $starts when storage holds $holds", async ({ stored, starts }) => {
+    const useWebSearch = await restoredWebSearch(stored);
+
+    expect(useWebSearch).toBe(starts);
+  });
+
+  it("is on for a reader who has never touched the setting", async () => {
+    localStorage.clear();
+    vi.resetModules();
+    const { useWebSearchAtom } = await import("./settingsAtom");
+
+    expect(createStore().get(useWebSearchAtom)).toBe(true);
   });
 });

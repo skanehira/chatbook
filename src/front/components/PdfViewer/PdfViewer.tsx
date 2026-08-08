@@ -2,12 +2,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { useAtomValue, useAtom } from "jotai";
 import { currentPageAtom, pageViewportAtom, outlineOpenAtom } from "../../atoms/pdfAtom";
-import {
-  activeSelectionAtom,
-  chatMessagesAtom,
-  useWebSearchAtom,
-  type ActiveSelection,
-} from "../../atoms/chatAtom";
+import { activeSelectionAtom, chatMessagesAtom, type ActiveSelection } from "../../atoms/chatAtom";
 import type { SelectionRect } from "../../../shared/schemas/selection";
 import type { BookDetail } from "../../../shared/schemas/book";
 import { PdfPage } from "./PdfPage";
@@ -19,6 +14,7 @@ import { selectionOnPage, type PageSelection } from "../../lib/selectionRects";
 import { usePdfDocument } from "../../hooks/usePdfDocument";
 import { usePdfOutline } from "../../hooks/usePdfOutline";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
+import { useWebSearchAtom } from "../../atoms/settingsAtom";
 import { useChatStream } from "../../hooks/useChatStream";
 import { useHighlights } from "../../hooks/useHighlights";
 import type { ViewerAction } from "../../lib/keybindings";

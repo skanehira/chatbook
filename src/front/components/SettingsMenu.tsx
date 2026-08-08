@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useAtom } from "jotai";
 import { keybindingModeAtom } from "../atoms/settingsAtom";
-import { useWebSearchAtom } from "../atoms/chatAtom";
+import { useWebSearchAtom } from "../atoms/settingsAtom";
 import { KEYBINDING_HELP, type KeybindingMode } from "../lib/keybindings";
 
 const MODE_LABELS: Record<KeybindingMode, string> = {

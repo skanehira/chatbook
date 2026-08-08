@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider, createStore } from "jotai";
 import { SettingsMenu } from "./SettingsMenu";
-import { useWebSearchAtom } from "../atoms/chatAtom";
+import { useWebSearchAtom } from "../atoms/settingsAtom";
 
 function renderMenu() {
   const store = createStore();

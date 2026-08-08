@@ -3,7 +3,6 @@ import {
   chatMessagesAtom,
   streamingContentAtom,
   isStreamingAtom,
-  useWebSearchAtom,
   activeSelectionAtom,
   abortChatStreamAtom,
   type ActiveSelection,
@@ -12,6 +11,7 @@ import type { BookDetail } from "../../../shared/schemas/book";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatInput } from "./ChatInput";
 import { HighlightListPanel } from "./HighlightListPanel";
+import { useWebSearchAtom } from "../../atoms/settingsAtom";
 import { useChatStream } from "../../hooks/useChatStream";
 import { useHighlights } from "../../hooks/useHighlights";
 

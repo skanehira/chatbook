@@ -4,24 +4,15 @@ import type { KeybindingMode } from "../lib/keybindings";
 
 const keybindingModeSchema = z.enum(["none", "vim", "emacs"]);
 
-const jsonStorage = createJSONStorage<KeybindingMode>(() => localStorage);
-
-/** Anything that is not one of the modes is treated as nothing stored. */
-function asMode(value: unknown, fallback: KeybindingMode): KeybindingMode {
-  const parsed = keybindingModeSchema.safeParse(value);
-  return parsed.success ? parsed.data : fallback;
-}
-
-/** Present whenever the environment can report another tab's writes. */
-const subscribeToStorage = jsonStorage.subscribe;
-
 /**
- * localStorage as a source of modes, with anything else treated as absent.
+ * localStorage as a source of settings, with anything the schema rejects
+ * treated as absent.
  *
  * The stored value is outside this app's control — an older release, another
- * tab, or the devtools can leave a string that is not a mode. `resolveAction`
- * has no default branch, so such a value makes it return undefined and the
- * shortcut hook throws while destructuring it, on the first key pressed.
+ * tab, or the devtools can leave something else there. For the keybinding mode
+ * the damage is concrete: `resolveAction` has no default branch, so an unknown
+ * mode makes it return undefined and the shortcut hook throws while
+ * destructuring it, on the first key pressed.
  *
  * **Both ways in have to be checked.** A value read at startup arrives through
  * `getItem`, but a value another tab writes arrives through `subscribe`, which
@@ -32,20 +23,47 @@ const subscribeToStorage = jsonStorage.subscribe;
  * which is both marked unstable and has that same gap: it replaces `getItem`
  * alone.
  */
-const keybindingModeStorage = {
-  ...jsonStorage,
-  getItem: (key: string, initialValue: KeybindingMode): KeybindingMode =>
-    asMode(jsonStorage.getItem(key, initialValue), initialValue),
-  subscribe: subscribeToStorage
-    ? (key: string, callback: (value: KeybindingMode) => void, initialValue: KeybindingMode) =>
-        subscribeToStorage(key, (value) => callback(asMode(value, initialValue)), initialValue)
-    : undefined,
-};
+function validatedStorage<T>(schema: z.ZodType<T>) {
+  const jsonStorage = createJSONStorage<T>(() => localStorage);
+  const accept = (value: unknown, fallback: T): T => {
+    const parsed = schema.safeParse(value);
+    return parsed.success ? parsed.data : fallback;
+  };
+
+  /** Present whenever the environment can report another tab's writes. */
+  const subscribeToStorage = jsonStorage.subscribe;
+
+  return {
+    ...jsonStorage,
+    getItem: (key: string, initialValue: T): T =>
+      accept(jsonStorage.getItem(key, initialValue), initialValue),
+    subscribe: subscribeToStorage
+      ? (key: string, callback: (value: T) => void, initialValue: T) =>
+          subscribeToStorage(key, (value) => callback(accept(value, initialValue)), initialValue)
+      : undefined,
+  };
+}
 
 /** Persisted so the reader keeps the chosen bindings across sessions. */
 export const keybindingModeAtom = atomWithStorage<KeybindingMode>(
   "chatbook:keybindings",
   "vim",
-  keybindingModeStorage,
+  validatedStorage(keybindingModeSchema),
+  { getOnInit: true },
+);
+
+/**
+ * Whether the assistant may search the web, on by default: it should fall back
+ * to the web when the document alone cannot answer the question.
+ *
+ * Persisted rather than held in the store because the reader builds a fresh
+ * jotai store per book. A setting kept only in the store would go back to its
+ * default on every book change and on every trip through the shelf, which is
+ * not what a setting sat next to the keybindings in the same menu should do.
+ */
+export const useWebSearchAtom = atomWithStorage<boolean>(
+  "chatbook:web-search",
+  true,
+  validatedStorage(z.boolean()),
   { getOnInit: true },
 );
