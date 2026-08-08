@@ -117,9 +117,9 @@ front と server が交わす形は `src/shared/schemas/` に zod スキーマ�
 - **クライアントの受け口**は `src/front/lib/fetcher.ts` の `fetcher(url, schema, init?, fetchFn?)`。
   `schema.safeParse` を通った値だけを返す。**レスポンスが返ったあとの失敗 2 系統**——サーバが
   拒否した（`error.code` を載せる。取れないときは `"UNKNOWN"`）と、レスポンスがスキーマに
-  合わない（`"INVALID_RESPONSE"`）——を `ApiError`（`message` / `code` / `status`）に揃えて
-  throw する。`fetch` 自体が reject するネットワーク断・abort はここでは包まず、
-  `TypeError` / `AbortError` がそのまま呼び出し側へ伝わる
+  合わない（`"INVALID_RESPONSE"`）——を `ApiError`（`message` / `code` / `status` / `kind`）に
+  揃えて throw する。`fetch` 自体が reject するネットワーク断・abort はここでは包まず、
+  `TypeError` / `AbortError` がそのまま呼び出し側へ伝わる（包む版は下記 `resultFetcher`）
 - **`src/server/services/chatService.ts` の `LlmMessage`** は LLM 送信用で `system` role を
   含み、保存される `ChatMessage`（`src/shared/schemas/chat.ts`）とは別物。shared に混ぜないこと
 
@@ -129,6 +129,52 @@ front と server が交わす形は `src/shared/schemas/` に zod スキーマ�
 意味がない。ワイヤ上の `code` は前方互換のため `z.string()` で受け（読み手は知らない code を
 渡す以外にできることがない）、サーバ側の構築だけ `shared/schemas/error.ts` の `ErrorCode`
 union + `satisfies` で固定する。
+
+### 失敗の運び方（neverthrow）
+
+**失敗はユーザーに見える形にするか、握りつぶす理由をコメントに書くかのどちらかにする。**
+`console.error` だけで済ませない（それは前者でも後者でもない）。
+
+- **サーバの service は `ResultAsync`**。エラー型は `src/server/services/serviceError.ts` の
+  `ServiceError = { type: "NOT_FOUND" } | { type: "STORAGE"; cause }` の 2 つだけ。route が
+  `.match()` で封筒に落とす（`src/server/routes/pdf.ts` の `serviceFailureResponse` /
+  `storageFailureResponse`）。「無い」は各エンドポイントの言葉で 404、「ストアが応答しない」は
+  一律 `INTERNAL_ERROR` の 500 で、`cause` はサーバのログにだけ出す
+- **想定外の throw と未定義パスは `src/server/index.ts` の `app.onError` / `notFound` が拾う**。
+  Hono の既定は `text/plain` の "Internal Server Error" を返し、これは封筒ではないので
+  `fetcher` からは `UNKNOWN` にしか見えない。`/api/*` だけが Worker に来る
+  （`wrangler.jsonc` の `run_worker_first`）ので、`notFound` が SPA の直リンクを奪うことはない
+- **フロントの読み取り（SWR）は throw ベースの `fetcher` のまま**。SWR の `error` state が
+  その境界の Result そのもので、`Err` に変換して戻すのは往復の無駄
+- **mutation とイベントハンドラ起点の 1 回きりの取得は `resultFetcher`**
+  （`ResultAsync<T, ApiError>`）。受け皿になる SWR が無いので、失敗は値で返さないと消える。
+  `fetch` 自体の reject もここで包むため、`ApiError.kind` で `http` / `network` / `parse` を
+  区別できる（`network` の `code` は `NETWORK_ERROR` / `ABORTED`、`status` は 0）
+- **レンダー中の throw は Result では拾えない**ので、`src/front/routes.tsx` が両ルートに
+  `errorElement`（`src/front/components/RouteErrorBoundary.tsx`）を張る
+
+失敗の受け皿と表示場所は次のとおり。新しい失敗を足すときはこの表のどれかに合流させる:
+
+| 失敗                              | 受け皿                                                | 出る場所                                   |
+| --------------------------------- | ----------------------------------------------------- | ------------------------------------------ |
+| 本棚の読み込み・削除・追加        | `ShelfPage` の `actionError` と SWR の `error`        | 本棚上部の赤い枠                           |
+| 本の読み込み                      | `useBook` の `error` → `bookError` prop               | ビューア中央とチャットパネル               |
+| PDF バイナリの取得・pdf.js の構築 | `usePdfDocument` の `error`                           | ビューア中央                               |
+| ページの描画                      | `PdfPage` の `onError` → `PdfViewer` の `renderError` | ビューア上部（ページを移ると消える）       |
+| 目次の取得                        | `usePdfOutline` の `error`                            | 目次パネル                                 |
+| ハイライトの保存                  | `useAskAboutSelection` の `saveError`                 | ビューア上部（ポップオーバーは開いたまま） |
+| チャットの送信・履歴の取得        | `chatErrorAtom`                                       | チャットパネル                             |
+| リンク先の passage が見つからない | `useReadingLocation` の `passageNotFound`             | ヘッダ直下の帯                             |
+
+`chatErrorAtom` だけ二重の口がある。**atom が表示の正、`sendMessage` の戻り値
+（`ResultAsync<MessageId, ApiError>`）は呼び出し元のフロー制御用**という分担で、戻り値を
+捨てた呼び出し元があっても画面が無言にならないようにしてある。新しい送信の開始と、
+別のハイライトを開いたときにクリアする。
+
+意図的に握りつぶしているのは 3 か所だけで、いずれも理由をコメントに書いてある:
+表紙の生成（`pdfLoader.ts`。本棚がタイトルで代替する）、SSE 断片のパース
+（`sseParser.ts` / `deepseekService.ts`）、クライアント切断後の送信
+（`routes/pdf.ts`。回答の保存を守るため）。
 
 #### `positionData` の正準形
 
@@ -183,8 +229,15 @@ union + `satisfies` で固定する。
   `src/front/hooks/useChatStream.ts` が `src/shared/schemas/sse.ts` の
   `chatSseEventSchema`（4 イベントの discriminated union）で `safeParse` し、通ったものだけ
   扱う。**キャストで済ませないこと**——未知の種別の出典が `CitationBadge` の描画に届く
-- 送信は **必ず `useChatStream` の `sendMessage` を通す**。ポップオーバーからの初回質問も同様。
-  ここを生 `fetch` にすると質問文の即時表示と「考え中…」が出なくなる
+- 送信は **必ず `useChatStream` の `sendMessage` を通す**。ポップオーバーからの初回質問も
+  `useAskAboutSelection` 経由でここに来る。生 `fetch` にすると質問文の即時表示と
+  「考え中…」が出なくなる
+- **回答を保存できなかったときは `done` ではなく `event: error`（`CHAT_SAVE_FAILED`）を送る**。
+  保存前に `done` を送ると、画面には回答が出そろっているのにリロードで消える。
+  ここを `.catch(console.error)` に戻さないこと
+- ポップオーバーからの初回質問は**保存された回答を待たない**。`sendMessage` の完了を待つと
+  ポップオーバーが 10 秒前後ページを覆う。閉じる合図はハイライトの保存が成功したこと
+  （`useAskAboutSelection`）で、ストリーム自体の失敗は `chatErrorAtom` が受ける
 
 ### DeepSeek の呼び分け
 
@@ -206,28 +259,30 @@ PDF 引用は `fullText` 内の位置からページ番号を割り出してジ�
 ### 状態管理とルーティング
 
 **画面に出しっぱなしにするサーバのデータは SWR、クライアントだけの状態は Jotai の atom**
-（`src/front/atoms/`）。両方に同じものを載せないこと。`neverthrow` はテンプレート由来の
-未使用依存で、現在どこからも import していない。
+（`src/front/atoms/`）。両方に同じものを載せないこと。
 
 - `/` … 本棚（`ShelfPage`）。一覧は `useSWR("/api/pdfs")`
 - `/books/:pdfId` … リーダー（`AppPage`）。本は `useBook(pdfId)` で読むので
   リロード・直リンクでも開ける。読んだ本は `PdfViewer` / `ChatArea` へ **props で**
   渡す（atom に写さない。読み手はこの 2 つだけなので prop drilling にならない）
+- どちらのルートにも `errorElement` が付く（上記「失敗の運び方（neverthrow）」）
 
 **チャットだけは SWR に載っていない**。`chatMessagesAtom` が持ち、履歴の読み込みは
-`AppPage` の `handleSelectionClick` が生の `fetcher` を呼ぶ。理由は、同じ状態を SSE の
+`AppPage` の `handleSelectionClick` が `resultFetcher` を直接呼ぶ。理由は、同じ状態を SSE の
 ストリームがトークンごとに書き換えるため（`useChatStream`）——キャッシュに載せると
 再検証が流れてきた回答を上書きしうる。**「データ取得はすべて SWR」ではない**。
-イベントハンドラ起点の 1 回きりの取得（履歴・選択の作成・アップロード）は生の `fetcher`
-で書く。
+イベントハンドラ起点の 1 回きりの取得（履歴・選択の作成・アップロード）は SWR を通さず
+`resultFetcher` で書く（受け皿になる SWR が無いので、失敗は値で返さないと消える）。
 
 SWR の使い方で押さえるところ:
 
 - **fetcher は必ず `src/front/lib/fetcher.ts` の `fetcher` を通す**（上記
   「外部入力のバリデーション（zod）」）。`useSWR(key, () => fetch(...).then(r => r.json()))`
   のように生 `fetch` を渡すとスキーマ検証を素通りし、`ApiError` / `INVALID_RESPONSE`
-  の防護が消える。現在の SWR 呼び出しは全て `fetcher` 経由（PDF バイナリの取得だけは
-  JSON ではないので `usePdfDocument` が生の fetch を使うが、これは SWR ではない）
+  の防護が消える。SWR の `error` state が受け止めるので、ここは throw する `fetcher` の
+  ままでよく、`resultFetcher` に替えない。現在の SWR 呼び出しは全て `fetcher` 経由
+  （PDF バイナリの取得だけは JSON ではないので `usePdfDocument` が生の fetch を使い、
+  拒否の読み取りだけ `readRefusal` を通す。これは SWR ではない）
 - **ルートの `SWRConfig`**（`src/front/main.tsx`）で `revalidateOnFocus` を切っている。
   ローカル単一ユーザーのアプリでデータは自分の操作でしか変わらず、focus 復帰の再検証は
   Playwright のフォーカス往復で E2E を非決定にするだけ
@@ -254,7 +309,8 @@ SWR の使い方で押さえるところ:
   `keybindingModeAtom` / `useWebSearchAtom` がその形）
 - **テストの差し替え口は 2 つある**。取得そのものを差し替えるなら DI 引数——
   `useBook(pdfId, loadBook)` / `useHighlights(pdfId, loadBook)` /
-  `ShelfPage({ loadBooks, deleteBook })` / `FileSelector({ extract })` がその口。
+  `useAskAboutSelection(addHighlight, saveSelection)` /
+  `ShelfPage({ loadBooks, deleteBook, extract })` / `FileSelector({ extract })` がその口。
   キャッシュの中身を用意したいなら `src/test/swrTestCache.tsx` の `SwrTestCache` で包む
   （SWR の既定キャッシュはモジュールレベルの singleton なので、包まないとテストが互いの
   キャッシュを見て実行順に依存する。`seed` を渡すとそのキーをサーバの代わりに使う）。
