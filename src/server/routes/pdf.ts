@@ -29,8 +29,9 @@ type Env = {
 };
 
 /**
- * Build the PDF routes. Ids and timestamps come from the injected clock, which
- * is the single seam tests use to make a request's writes deterministic.
+ * Build the PDF routes. Ids and timestamps come from the injected clock; the
+ * exported pdfRoute uses the system clock. Passing a fixed clock here makes a
+ * request's writes deterministic.
  */
 export function createPdfRoute(idClock: IdClock = systemIdClock) {
   return (
