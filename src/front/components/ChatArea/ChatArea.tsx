@@ -4,6 +4,7 @@ import {
   streamingContentAtom,
   isStreamingAtom,
   activeSelectionAtom,
+  chatErrorAtom,
   abortChatStreamAtom,
   type ActiveSelection,
 } from "../../atoms/chatAtom";
@@ -18,15 +19,27 @@ import { useHighlights } from "../../hooks/useHighlights";
 interface ChatAreaProps {
   /** The book being read, or nothing while it is still being read in. */
   book: BookDetail | undefined;
+  /** Why the book could not be read, if it could not. */
+  bookError?: Error;
   onSelectionClick: (selection: ActiveSelection) => void;
 }
 
-export function ChatArea({ book, onSelectionClick }: ChatAreaProps) {
+/** A failure worded for the reader, in the one place the panel shows them. */
+function ChatErrorNotice({ message }: { message: string }) {
+  return (
+    <p role="alert" className="m-2 rounded-md bg-red-50 p-3 text-sm text-red-600">
+      {message}
+    </p>
+  );
+}
+
+export function ChatArea({ book, bookError, onSelectionClick }: ChatAreaProps) {
   const [activeSelection, setActiveSelection] = useAtom(activeSelectionAtom);
   const { highlights } = useHighlights(book?.id);
   const messages = useAtomValue(chatMessagesAtom);
   const streamingContent = useAtomValue(streamingContentAtom);
   const isStreaming = useAtomValue(isStreamingAtom);
+  const chatError = useAtomValue(chatErrorAtom);
   const useWebSearch = useAtomValue(useWebSearchAtom);
   const abortChatStream = useSetAtom(abortChatStreamAtom);
 
@@ -36,6 +49,18 @@ export function ChatArea({ book, onSelectionClick }: ChatAreaProps) {
     if (!book || !activeSelection) return;
     await sendMessage(book.id, activeSelection.id, content, useWebSearch);
   };
+
+  if (bookError && !book) {
+    // The highlights are read out of the book, so a book that did not load has
+    // no list to show — and an empty list here reads as "nothing marked yet".
+    // A book already in hand still wins: a failed re-read of it changes nothing
+    // about the highlights on screen.
+    return (
+      <div className="flex h-full flex-col justify-center bg-white">
+        <ChatErrorNotice message={`ハイライトを読み込めませんでした: ${bookError.message}`} />
+      </div>
+    );
+  }
 
   if (!book) {
     return (
@@ -68,6 +93,7 @@ export function ChatArea({ book, onSelectionClick }: ChatAreaProps) {
         streamingContent={streamingContent}
         isStreaming={isStreaming}
       />
+      {chatError !== null && <ChatErrorNotice message={chatError} />}
       <ChatInput
         onSend={handleSend}
         disabled={isStreaming}

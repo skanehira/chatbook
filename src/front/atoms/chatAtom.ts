@@ -13,6 +13,18 @@ export const chatMessagesAtom = atom<ChatMessage[]>([]);
 export const streamingContentAtom = atom<string>("");
 export const isStreamingAtom = atom<boolean>(false);
 
+/**
+ * What went wrong with this conversation, worded for the reader, or null when
+ * nothing has.
+ *
+ * The panel reads this and nothing else: `sendMessage` also hands its failure
+ * back so a caller can decide what to do next, but a caller that ignores the
+ * return value still cannot leave the reader staring at an unanswered
+ * question. Whoever writes here words the message, since "the answer never
+ * came" and "the history could not be read" are not the same sentence.
+ */
+export const chatErrorAtom = atom<string | null>(null);
+
 /** Shared, so leaving a chat can stop an answer any of the panels started. */
 export const chatAbortControllerAtom = atom<AbortController | null>(null);
 

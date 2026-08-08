@@ -50,14 +50,19 @@ const isBookRequest = (url: string) => /^\/api\/pdf\/[^/]+$/.test(url);
  * how a test shows the reader opened the book without waiting for the server:
  * anything on screen got there from the cache, because nothing else can arrive.
  */
-function readerFetchStub({ holdTheBook = false } = {}) {
+function readerFetchStub({ holdTheBook = false, refuseChatHistory = false } = {}) {
   const urls: string[] = [];
   // Every caller here reaches the network through `fetcher`, which is only
   // ever handed a url string.
   const fetchFn = (url: string) => {
     urls.push(url);
     if (url.endsWith("/chats")) {
-      return Promise.resolve(new Response(JSON.stringify({ messages: [] }), { status: 200 }));
+      const body = refuseChatHistory
+        ? { error: { code: "SELECTION_NOT_FOUND", message: "Selection not found" } }
+        : { messages: [] };
+      return Promise.resolve(
+        new Response(JSON.stringify(body), { status: refuseChatHistory ? 404 : 200 }),
+      );
     }
     if (holdTheBook && isBookRequest(url)) {
       return new Promise<Response>(() => {});
@@ -80,7 +85,7 @@ function OpenOtherBook({ pdfId }: { pdfId: string }) {
 function renderReader(
   pdfId: string,
   seed: Record<string, unknown>,
-  options: { holdTheBook?: boolean } = {},
+  options: { holdTheBook?: boolean; refuseChatHistory?: boolean } = {},
 ) {
   const { urls, fetchFn } = readerFetchStub(options);
   vi.stubGlobal("fetch", fetchFn);
@@ -131,6 +136,18 @@ describe("AppPage", () => {
     expect(await screen.findByText(BOOK_B.fileName)).toBeInTheDocument();
     expect(screen.getByText(B_PASSAGE)).toBeInTheDocument();
     expect(screen.queryByText(A_PASSAGE)).not.toBeInTheDocument();
+  });
+
+  it("says the conversation could not be read instead of showing it as empty", async () => {
+    // An empty conversation and one that failed to load looked identical: the
+    // catch put an empty list on screen either way.
+    renderReader(BOOK_A.id, { [bookKey(BOOK_A.id)]: BOOK_A }, { refuseChatHistory: true });
+
+    await userEvent.click(await screen.findByText(A_PASSAGE));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /^チャット履歴を読み込めませんでした: Selection not found$/,
+    );
   });
 
   it("says what went wrong when the book cannot be read", async () => {

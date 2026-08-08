@@ -3,7 +3,12 @@ import { render, screen, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider, createStore } from "jotai";
 import { ChatArea } from "./ChatArea";
-import { doneEvent, streamingFetchStub, tokenEvent } from "../../../test/streamingFetchStub";
+import {
+  doneEvent,
+  errorEvent,
+  streamingFetchStub,
+  tokenEvent,
+} from "../../../test/streamingFetchStub";
 import {
   activeSelectionAtom,
   chatAbortControllerAtom,
@@ -45,8 +50,16 @@ const BOOK: BookDetail = {
   selections: HIGHLIGHTS,
 };
 
-function renderChat(options: { activeSelection?: ActiveSelection | null } = {}) {
-  const { activeSelection = { id: "s1", selectedText: SELECTED_TEXT, pageNumber: 42 } } = options;
+function renderChat(
+  options: {
+    activeSelection?: ActiveSelection | null;
+    /** Set to render the panel as it looks when the book itself failed to load. */
+    bookError?: Error;
+  } = {},
+) {
+  const { activeSelection = { id: "s1", selectedText: SELECTED_TEXT, pageNumber: 42 }, bookError } =
+    options;
+  const book = bookError ? undefined : BOOK;
   const store = createStore();
   store.set(activeSelectionAtom, activeSelection);
 
@@ -56,7 +69,11 @@ function renderChat(options: { activeSelection?: ActiveSelection | null } = {}) 
     // one the viewer draws from.
     <SwrTestCache seed={{ [bookKey(BOOK.id)]: BOOK }}>
       <Provider store={store}>
-        <ChatArea book={BOOK} onSelectionClick={(selection) => opened.push(selection)} />
+        <ChatArea
+          book={book}
+          bookError={bookError}
+          onSelectionClick={(selection) => opened.push(selection)}
+        />
       </Provider>
     </SwrTestCache>,
   );
@@ -104,10 +121,43 @@ describe("ChatArea", () => {
     ]);
   });
 
+  it("says why the answer never came instead of leaving the question unanswered", async () => {
+    const { fetchFn, calls } = streamingFetchStub();
+    vi.stubGlobal("fetch", fetchFn);
+    renderChat();
+
+    await userEvent.type(screen.getByPlaceholderText("質問を入力..."), "この段落を一言で要約して");
+    await userEvent.keyboard("{Enter}");
+    await act(async () => {
+      calls[0].emit(errorEvent("AI_API_ERROR", "upstream is down"));
+      calls[0].end();
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /^回答の取得に失敗しました: upstream is down$/,
+      ),
+    );
+    // The question stays on screen, and the wait that would suggest an answer
+    // is still coming is over
+    expect(screen.getByText("この段落を一言で要約して")).toBeVisible();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("shows the selected passage the question is about", () => {
     renderChat();
 
     expect(screen.getByText(SELECTED_TEXT)).toBeInTheDocument();
+  });
+
+  it("says the book could not be read rather than showing it as one without highlights", () => {
+    // The highlights come from the book itself, so a book that failed to load
+    // is indistinguishable from one nobody has marked up yet.
+    renderChat({ activeSelection: null, bookError: new Error("PDF not found") });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /^ハイライトを読み込めませんでした: PDF not found$/,
+    );
   });
 
   it("lists the book's highlights while no passage is selected", () => {

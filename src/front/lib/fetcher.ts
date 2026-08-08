@@ -87,8 +87,14 @@ const NETWORK_ERROR_CODE = "NETWORK_ERROR";
 /** Code reported when the caller's own signal cut the request short. */
 const ABORTED_CODE = "ABORTED";
 
-/** A rejection from `fetch` itself, given the shape every other failure has. */
-function networkFailure(url: string, cause: unknown): ApiError {
+/**
+ * A rejection from `fetch` itself, given the shape every other failure has.
+ *
+ * Exported for the one caller that does not go through `fetcher` at all: the
+ * chat stream reads the response body itself, and its failures have to be the
+ * same `ApiError` the rest of the app reports.
+ */
+export function networkFailure(url: string, cause: unknown): ApiError {
   if ((cause instanceof DOMException || cause instanceof Error) && cause.name === "AbortError") {
     return new ApiError(cause.message, ABORTED_CODE, 0, "network");
   }

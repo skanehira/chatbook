@@ -5,6 +5,7 @@ import { currentPageAtom } from "../atoms/pdfAtom";
 import {
   activeSelectionAtom,
   chatMessagesAtom,
+  chatErrorAtom,
   abortChatStreamAtom,
   type ActiveSelection,
 } from "../atoms/chatAtom";
@@ -14,7 +15,7 @@ import { SettingsMenu } from "../components/SettingsMenu";
 import { useBook } from "../hooks/useBook";
 import { useReadingLocation } from "../hooks/useReadingLocation";
 import { passageFromNavigation } from "../lib/textFragment";
-import { fetcher } from "../lib/fetcher";
+import { fetcher, resultFetcher } from "../lib/fetcher";
 import { locatedPageSchema } from "../../shared/schemas/book";
 import { chatHistorySchema } from "../../shared/schemas/chat";
 
@@ -51,6 +52,7 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
   const { data: book, error } = useBook(pdfId);
   const [, setActiveSelection] = useAtom(activeSelectionAtom);
   const [, setChatMessages] = useAtom(chatMessagesAtom);
+  const [, setChatError] = useAtom(chatErrorAtom);
   const [, setCurrentPage] = useAtom(currentPageAtom);
   const abortChatStream = useSetAtom(abortChatStreamAtom);
   const [leftWidth, setLeftWidth] = useState(60);
@@ -73,20 +75,23 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
       // Otherwise the conversation left behind shows under the new passage
       // until its own history arrives
       setChatMessages([]);
+      // Whatever failed in the chat being left is not about this one
+      setChatError(null);
       if (!pdfId) return;
 
-      try {
-        const data = await fetcher(
-          `/api/pdf/${pdfId}/selections/${selection.id}/chats`,
-          chatHistorySchema,
-        );
+      const history = await resultFetcher(
+        `/api/pdf/${pdfId}/selections/${selection.id}/chats`,
+        chatHistorySchema,
+      );
 
-        setChatMessages(data.messages);
-      } catch {
-        setChatMessages([]);
-      }
+      // An empty conversation and one that could not be read used to look the
+      // same, so a failure here read as "you never asked anything about this".
+      history.match(
+        (data) => setChatMessages(data.messages),
+        (failure) => setChatError(`チャット履歴を読み込めませんでした: ${failure.message}`),
+      );
     },
-    [abortChatStream, pdfId, setActiveSelection, setChatMessages, setCurrentPage],
+    [abortChatStream, pdfId, setActiveSelection, setChatError, setChatMessages, setCurrentPage],
   );
 
   return (
@@ -144,7 +149,11 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
 
         {/* Right panel: Chat Area */}
         <div style={{ width: `${100 - leftWidth}%` }} className="h-full min-w-0">
-          <ChatArea book={book} onSelectionClick={handleSelectionClick} />
+          <ChatArea
+            book={book}
+            bookError={error as Error | undefined}
+            onSelectionClick={handleSelectionClick}
+          />
         </div>
       </main>
     </div>
