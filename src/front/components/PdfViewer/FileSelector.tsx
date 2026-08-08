@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { useSWRConfig } from "swr";
-import { extractPdfData } from "../../lib/pdfLoader";
+import { extractPdfData, type ExtractedPdfData } from "../../lib/pdfLoader";
 import { fetcher } from "../../lib/fetcher";
 import { bookKey } from "../../hooks/useBook";
 import { pdfMetadataSchema, type BookDetail } from "../../../shared/schemas/book";
@@ -10,9 +10,16 @@ interface FileSelectorProps {
   onOpened?: (pdfId: string) => void;
   label?: string;
   className?: string;
+  /** Reads the text and cover out of the chosen file; injectable for tests. */
+  extract?: (file: File) => Promise<ExtractedPdfData>;
 }
 
-export function FileSelector({ onOpened, label = "PDFを開く", className }: FileSelectorProps) {
+export function FileSelector({
+  onOpened,
+  label = "PDFを開く",
+  className,
+  extract = extractPdfData,
+}: FileSelectorProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const { mutate } = useSWRConfig();
 
@@ -22,7 +29,7 @@ export function FileSelector({ onOpened, label = "PDFを開く", className }: Fi
 
     try {
       // Extract text and render the cover client-side (pdf.js)
-      const extracted = await extractPdfData(file);
+      const extracted = await extract(file);
 
       // Send as multipart/form-data (avoids base64 overhead)
       const formData = new FormData();
@@ -41,8 +48,12 @@ export function FileSelector({ onOpened, label = "PDFを開く", className }: Fi
       // The upload already answered with everything the reader needs to open
       // the book, so hand it to the cache the reader reads from. Without this
       // the reader would show an empty viewer while it asked for the very
-      // thing that was just sent. A fresh highlight list is right: the book
-      // was uploaded, not annotated.
+      // thing that was just sent.
+      //
+      // The highlight list starts empty because the upload does not report
+      // one. Opening a book that was annotated before therefore shows its
+      // highlights a moment late, when the reader's own read of the book
+      // lands on top of this entry.
       const opened: BookDetail = {
         id: result.id,
         fileName: result.fileName,

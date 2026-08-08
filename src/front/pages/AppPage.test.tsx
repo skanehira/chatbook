@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vite-plus/test";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
+import { SWRConfig } from "swr";
 import { AppPage } from "./AppPage";
 import { bookKey } from "../hooks/useBook";
 import { SwrTestCache } from "../../test/swrTestCache";
@@ -38,13 +39,18 @@ const BOOK_B: BookDetail = {
   selections: [highlight("b1", B_PASSAGE)],
 };
 
+/** The book's own endpoint, as opposed to the binary or a chat under it. */
+const isBookRequest = (url: string) => /^\/api\/pdf\/[^/]+$/.test(url);
+
 /**
- * Answers the two requests the reader makes on its own: the PDF binary (which
- * jsdom cannot render anyway) and the chat history of a highlight that is
- * opened. Every request it saw is recorded, so a test can show that the book
- * itself was never asked for.
+ * Answers the requests the reader makes on its own: the PDF binary (which jsdom
+ * cannot render anyway) and the chat history of a highlight that is opened.
+ *
+ * `holdTheBook` leaves the request for the book itself hanging forever. That is
+ * how a test shows the reader opened the book without waiting for the server:
+ * anything on screen got there from the cache, because nothing else can arrive.
  */
-function readerFetchStub() {
+function readerFetchStub({ holdTheBook = false } = {}) {
   const urls: string[] = [];
   // Every caller here reaches the network through `fetcher`, which is only
   // ever handed a url string.
@@ -52,6 +58,9 @@ function readerFetchStub() {
     urls.push(url);
     if (url.endsWith("/chats")) {
       return Promise.resolve(new Response(JSON.stringify({ messages: [] }), { status: 200 }));
+    }
+    if (holdTheBook && isBookRequest(url)) {
+      return new Promise<Response>(() => {});
     }
     return Promise.resolve(new Response(null, { status: 404 }));
   };
@@ -68,18 +77,26 @@ function OpenOtherBook({ pdfId }: { pdfId: string }) {
   );
 }
 
-function renderReader(pdfId: string, seed: Record<string, unknown>) {
-  const { urls, fetchFn } = readerFetchStub();
+function renderReader(
+  pdfId: string,
+  seed: Record<string, unknown>,
+  options: { holdTheBook?: boolean } = {},
+) {
+  const { urls, fetchFn } = readerFetchStub(options);
   vi.stubGlobal("fetch", fetchFn);
 
   render(
     <SwrTestCache seed={seed}>
-      <MemoryRouter initialEntries={[`/books/${pdfId}`]}>
-        <OpenOtherBook pdfId={BOOK_B.id} />
-        <Routes>
-          <Route path="/books/:pdfId" element={<AppPage />} />
-        </Routes>
-      </MemoryRouter>
+      {/* Seeded entries are revalidated on mount here, as they are in the app.
+          What the reader shows before that lands is what these tests are about. */}
+      <SWRConfig value={{ revalidateIfStale: true }}>
+        <MemoryRouter initialEntries={[`/books/${pdfId}`]}>
+          <OpenOtherBook pdfId={BOOK_B.id} />
+          <Routes>
+            <Route path="/books/:pdfId" element={<AppPage />} />
+          </Routes>
+        </MemoryRouter>
+      </SWRConfig>
     </SwrTestCache>,
   );
   return { urls };
@@ -90,11 +107,13 @@ describe("AppPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("opens the book from the cache the upload filled instead of asking for it again", async () => {
-    const { urls } = renderReader(BOOK_A.id, { [bookKey(BOOK_A.id)]: BOOK_A });
+  it("opens a book already in the cache without waiting for the server", async () => {
+    // Nothing will answer for the book, so anything on screen came from the
+    // entry the upload filed under this key
+    renderReader(BOOK_A.id, { [bookKey(BOOK_A.id)]: BOOK_A }, { holdTheBook: true });
 
-    expect(await screen.findByText(BOOK_A.fileName)).toBeInTheDocument();
-    expect(urls).toStrictEqual([`/api/pdf/${BOOK_A.id}/file`]);
+    expect(screen.getByText(BOOK_A.fileName)).toBeInTheDocument();
+    expect(screen.getByText(A_PASSAGE)).toBeInTheDocument();
   });
 
   it("leaves the chat of the book being read behind when another book is opened", async () => {
