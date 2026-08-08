@@ -1,22 +1,27 @@
 import { useState, useCallback } from "react";
 import { useNavigate } from "react-router";
 import useSWR from "swr";
+import type { ResultAsync } from "neverthrow";
 import { FileSelector } from "../components/PdfViewer/FileSelector";
-import { fetcher } from "../lib/fetcher";
+import { fetcher, resultFetcher, type ApiError } from "../lib/fetcher";
 import type { ExtractedPdfData } from "../lib/pdfLoader";
 import { bookDeletedSchema, bookListSchema, type BookSummary } from "../../shared/schemas/book";
 
 /** Cache key of the shelf, and the endpoint it is read from. */
 const SHELF_KEY = "/api/pdfs";
 
+/** Read by SWR, so a refusal belongs in its `error` state: this one throws. */
 const fetchBooks = () => fetcher(SHELF_KEY, bookListSchema).then((data) => data.books);
 
-const requestBookDeletion = (id: string) =>
-  fetcher(`/api/pdf/${id}`, bookDeletedSchema, { method: "DELETE" });
+/** Removes a book. A write, so its failure comes back in the value. */
+export type DeleteBook = (id: string) => ResultAsync<unknown, ApiError>;
+
+const requestBookDeletion: DeleteBook = (id) =>
+  resultFetcher(`/api/pdf/${id}`, bookDeletedSchema, { method: "DELETE" });
 
 interface ShelfPageProps {
   loadBooks?: () => Promise<BookSummary[]>;
-  deleteBook?: (id: string) => Promise<unknown>;
+  deleteBook?: DeleteBook;
   /** Passed straight to the file picker; injectable so tests can fail a read. */
   extract?: (file: File) => Promise<ExtractedPdfData>;
 }
@@ -152,14 +157,16 @@ export function ShelfPage({
   const removeBook = async (book: BookSummary) => {
     setActionError(null);
     setBookPendingDeletion(null);
-    try {
-      await deleteBook(book.id);
-      // The server has already dropped it, so re-reading the shelf would only
-      // confirm what this list can work out for itself.
-      await mutate((current) => current?.filter((b) => b.id !== book.id), { revalidate: false });
-    } catch (err) {
-      setActionError(`削除に失敗しました: ${(err as Error).message}`);
+
+    const removal = await deleteBook(book.id);
+    if (removal.isErr()) {
+      setActionError(`削除に失敗しました: ${removal.error.message}`);
+      return;
     }
+
+    // The server has already dropped it, so re-reading the shelf would only
+    // confirm what this list can work out for itself.
+    await mutate((current) => current?.filter((b) => b.id !== book.id), { revalidate: false });
   };
 
   return (

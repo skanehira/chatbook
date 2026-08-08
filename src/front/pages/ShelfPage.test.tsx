@@ -2,7 +2,9 @@ import { describe, it, expect } from "vite-plus/test";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useParams } from "react-router";
-import { ShelfPage } from "./ShelfPage";
+import { errAsync, okAsync } from "neverthrow";
+import { ShelfPage, type DeleteBook } from "./ShelfPage";
+import { ApiError } from "../lib/fetcher";
 import type { ExtractedPdfData } from "../lib/pdfLoader";
 import type { BookSummary } from "../../shared/schemas/book";
 import { SwrTestCache } from "../../test/swrTestCache";
@@ -20,7 +22,7 @@ function book(overrides: Partial<BookSummary> = {}): BookSummary {
 
 function renderShelf(props: {
   loadBooks?: () => Promise<BookSummary[]>;
-  deleteBook?: (id: string) => Promise<unknown>;
+  deleteBook?: DeleteBook;
   extract?: (file: File) => Promise<ExtractedPdfData>;
 }) {
   return render(
@@ -45,9 +47,10 @@ function recordingDeleter() {
   const deletedIds: string[] = [];
   return {
     deletedIds,
-    deleteBook: async (id: string) => {
+    deleteBook: ((id: string) => {
       deletedIds.push(id);
-    },
+      return okAsync({ deleted: true });
+    }) satisfies DeleteBook,
   };
 }
 
@@ -134,9 +137,7 @@ describe("ShelfPage", () => {
   it("keeps the book on the shelf and says why when the deletion fails", async () => {
     renderShelf({
       loadBooks: TWO_BOOKS,
-      deleteBook: async () => {
-        throw new Error("Server exploded");
-      },
+      deleteBook: () => errAsync(new ApiError("Server exploded", "INTERNAL_ERROR", 500)),
     });
 
     await userEvent.click(
