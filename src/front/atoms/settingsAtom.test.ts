@@ -16,6 +16,31 @@ async function restoredMode(stored: string) {
   return createStore().get(keybindingModeAtom);
 }
 
+/**
+ * A session with the atom mounted, which is what makes it listen for the
+ * storage events another tab's writes arrive as.
+ */
+async function openSession(stored: string) {
+  localStorage.clear();
+  localStorage.setItem(STORAGE_KEY, stored);
+  vi.resetModules();
+  const { keybindingModeAtom } = await import("./settingsAtom");
+  const store = createStore();
+  const unmount = store.sub(keybindingModeAtom, () => {});
+
+  return {
+    mode: () => store.get(keybindingModeAtom),
+    writeFromAnotherTab: (value: unknown) => {
+      const newValue = JSON.stringify(value);
+      localStorage.setItem(STORAGE_KEY, newValue);
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: STORAGE_KEY, newValue, storageArea: localStorage }),
+      );
+    },
+    unmount,
+  };
+}
+
 afterEach(() => {
   localStorage.clear();
 });
@@ -44,5 +69,27 @@ describe("keybindingModeAtom", () => {
     const mode = await restoredMode(stored);
 
     expect(mode).toBe(starts);
+  });
+
+  it("follows another tab when it switches to a mode the reader has bindings for", async () => {
+    const session = await openSession(JSON.stringify("vim"));
+
+    session.writeFromAnotherTab("emacs");
+
+    expect(session.mode()).toBe("emacs");
+    session.unmount();
+  });
+
+  it("falls back to the default mode when another tab writes one the reader has no bindings for", async () => {
+    // Checking storage only at startup would leave this open: the value
+    // arrives on the storage event, which never goes through getItem.
+    // Falling back to the default matches what a fresh session would do with
+    // the same stored value.
+    const session = await openSession(JSON.stringify("emacs"));
+
+    session.writeFromAnotherTab("dvorak");
+
+    expect(session.mode()).toBe("vim");
+    session.unmount();
   });
 });
