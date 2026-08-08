@@ -1,6 +1,24 @@
-import type { Citation } from "../../shared/schemas/citation";
+import { citationSchema, type Citation } from "../../shared/schemas/citation";
 
 export type { Citation } from "../../shared/schemas/citation";
+
+/**
+ * The sources stored with an answer, or null when there are none to show.
+ *
+ * Forgiving on purpose, like the highlight geometry: an answer whose citations
+ * column cannot be read must not make the whole conversation unreadable, since
+ * the answer itself is still there to show.
+ */
+export function readCitations(stored: string | null): Citation[] | null {
+  if (!stored) return null;
+  try {
+    const parsed = citationSchema.array().safeParse(JSON.parse(stored));
+    if (parsed.success) return parsed.data;
+  } catch {
+    // Not even JSON — fall through and show the answer without sources
+  }
+  return null;
+}
 
 /**
  * A turn as the LLM is given it. Not the stored `ChatMessage`: this one also

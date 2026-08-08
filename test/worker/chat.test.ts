@@ -314,6 +314,32 @@ describe("POST /api/pdf/:pdfId/selections/:selId/chats", () => {
     expect(await readChatHistory(pdfId, selectionId)).toStrictEqual([]);
   });
 
+  it("still serves a conversation holding an answer whose stored citations cannot be read", async () => {
+    const { pdfId, selectionId } = await createSelection("chat-broken-citations");
+    await env.DB.prepare(
+      "INSERT INTO chat_messages (id, selection_id, role, content, citations, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+      .bind(
+        "chat-broken-citations-answer",
+        selectionId,
+        "assistant",
+        "エッジで動きます",
+        "{not json",
+        "2026-01-01T00:00:00Z",
+      )
+      .run();
+
+    expect(await readChatHistory(pdfId, selectionId)).toStrictEqual([
+      {
+        id: "chat-broken-citations-answer",
+        role: "assistant",
+        content: "エッジで動きます",
+        citations: null,
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+    ]);
+  });
+
   it("leaves web search off when the request does not mention it", async () => {
     const { pdfId, selectionId } = await createSelection("chat-websearch-default");
     const calledUrls: string[] = [];

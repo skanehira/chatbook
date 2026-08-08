@@ -18,7 +18,12 @@ import {
   streamChatCompletion,
   streamResponseWithWebSearch,
 } from "../services/deepseekService";
-import { buildMessages, findPageNumber, parseCitations } from "../services/chatService";
+import {
+  buildMessages,
+  findPageNumber,
+  parseCitations,
+  readCitations,
+} from "../services/chatService";
 import { locateQuerySchema } from "../../shared/schemas/book";
 import { createSelectionRequestSchema } from "../../shared/schemas/selection";
 import { sendChatRequestSchema } from "../../shared/schemas/chat";
@@ -298,7 +303,7 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
             id: m.id,
             role: m.role,
             content: m.content,
-            citations: m.citations ? JSON.parse(m.citations) : null,
+            citations: readCitations(m.citations),
             createdAt: m.createdAt,
           })),
         });
