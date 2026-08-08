@@ -1,39 +1,16 @@
 import { atom } from "jotai";
+import type { ChatMessage } from "../../shared/schemas/chat";
+import type { SelectionHighlight } from "../../shared/schemas/selection";
 
-export interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  citations?: Citation[];
-  createdAt: string;
-}
-
-export interface Citation {
-  id: string;
-  type: "pdf" | "web";
-  text: string;
-  pageNumber?: number;
-  url?: string;
-}
+export type { ChatMessage } from "../../shared/schemas/chat";
+export type { Citation } from "../../shared/schemas/citation";
+export type { SelectionHighlight } from "../../shared/schemas/selection";
 
 /** The highlighted passage the current conversation is about. */
 export interface ActiveSelection {
   id: string;
   selectedText: string;
   pageNumber: number;
-}
-
-/** A highlight of the open book, as the viewer draws it and the list shows it. */
-export interface SelectionHighlight {
-  id: string;
-  selectedText: string;
-  pageNumber: number;
-  positionData: {
-    rects: { x: number; y: number; width: number; height: number }[];
-    pageWidth?: number;
-  };
-  color: string;
-  createdAt: string;
 }
 
 export const activeSelectionAtom = atom<ActiveSelection | null>(null);

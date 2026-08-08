@@ -3,14 +3,9 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { FileSelector } from "../components/PdfViewer/FileSelector";
 import { fetcher } from "../lib/fetcher";
+import type { BookSummary } from "../../shared/schemas/book";
 
-export interface Book {
-  id: string;
-  fileName: string;
-  pageCount: number;
-  updatedAt: string;
-  hasThumbnail: boolean;
-}
+export type Book = BookSummary;
 
 /** Module-level so the effect below keeps a stable dependency. */
 const fetchBooks = () => fetcher<{ books: Book[] }>("/api/pdfs").then((data) => data.books);

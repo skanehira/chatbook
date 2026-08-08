@@ -1,14 +1,11 @@
-import type { SelectionRect } from "../../lib/selectionRects";
+import type { PositionData, SelectionRect } from "../../../shared/schemas/selection";
 
 interface Highlight {
   id: string;
   pageNumber: number;
-  positionData: {
-    rects: SelectionRect[];
-    /** Page width the rects were measured at. Missing on records stored before
-     * the viewer could be resized, which were always measured at 1.5x. */
-    pageWidth?: number;
-  };
+  /** `pageWidth` is missing on records stored before the viewer could be
+   * resized, which were always measured at 1.5x. */
+  positionData: PositionData;
   color: string;
 }
 

@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { ChatMessage } from "./chatService";
+import type { LlmMessage } from "./chatService";
 
 interface StreamCallbacks {
   onToken: (token: string) => void;
@@ -57,7 +57,7 @@ The document states that Workers run on Cloudflare's global network[1].
  */
 export async function streamChatCompletion(
   apiKey: string,
-  messages: ChatMessage[],
+  messages: LlmMessage[],
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
 ): Promise<void> {

@@ -1,4 +1,12 @@
-export interface ChatMessage {
+import type { Citation } from "../../shared/schemas/citation";
+
+export type { Citation } from "../../shared/schemas/citation";
+
+/**
+ * A turn as the LLM is given it. Not the stored `ChatMessage`: this one also
+ * carries the `system` turn, which is built per request and never persisted.
+ */
+export interface LlmMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
@@ -10,20 +18,12 @@ export function buildMessages(
   systemPrompt: string,
   history: { role: string; content: string }[],
   userMessage: string,
-): ChatMessage[] {
+): LlmMessage[] {
   return [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
     { role: "user", content: userMessage },
   ];
-}
-
-export interface Citation {
-  id: string;
-  type: "pdf" | "web";
-  text: string;
-  pageNumber?: number;
-  url?: string;
 }
 
 /** pdfLoader が fullText に埋めるページ区切り。 */

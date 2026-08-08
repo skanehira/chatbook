@@ -2,6 +2,7 @@ import { ulid } from "ulid";
 import { drizzle } from "drizzle-orm/d1";
 import { desc, eq } from "drizzle-orm";
 import { pdfs, selections } from "../db/schema";
+import type { BookSummary, PdfMetadata } from "../../shared/schemas/book";
 
 /**
  * R2 object key for a PDF, derived from its content hash.
@@ -33,12 +34,7 @@ export const systemIdClock: IdClock = {
   now: () => new Date().toISOString(),
 };
 
-export interface PdfMetadata {
-  id: string;
-  fileName: string;
-  pageCount: number;
-  fullText: string;
-}
+export type { PdfMetadata } from "../../shared/schemas/book";
 
 interface OpenPdfInput {
   fileName: string;
@@ -49,13 +45,7 @@ interface OpenPdfInput {
   thumbnail?: ArrayBuffer;
 }
 
-export interface BookSummary {
-  id: string;
-  fileName: string;
-  pageCount: number;
-  updatedAt: string;
-  hasThumbnail: boolean;
-}
+export type { BookSummary } from "../../shared/schemas/book";
 
 /**
  * List every stored book, most recently opened first, for the shelf view.
