@@ -1,9 +1,9 @@
 import { useRef } from "react";
-import { useAtom } from "jotai";
-import { pdfDocAtom, pdfStatusAtom, pdfErrorAtom } from "../../atoms/pdfAtom";
+import { useSWRConfig } from "swr";
 import { extractPdfData } from "../../lib/pdfLoader";
 import { fetcher } from "../../lib/fetcher";
-import { pdfMetadataSchema } from "../../../shared/schemas/book";
+import { bookKey } from "../../hooks/useBook";
+import { pdfMetadataSchema, type BookDetail } from "../../../shared/schemas/book";
 
 interface FileSelectorProps {
   /** Called with the book id once the upload finished, so the caller can navigate. */
@@ -14,16 +14,11 @@ interface FileSelectorProps {
 
 export function FileSelector({ onOpened, label = "PDFを開く", className }: FileSelectorProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [, setPdfDoc] = useAtom(pdfDocAtom);
-  const [, setPdfStatus] = useAtom(pdfStatusAtom);
-  const [, setPdfError] = useAtom(pdfErrorAtom);
+  const { mutate } = useSWRConfig();
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    setPdfStatus("loading");
-    setPdfError(null);
 
     try {
       // Extract text and render the cover client-side (pdf.js)
@@ -43,16 +38,23 @@ export function FileSelector({ onOpened, label = "PDFを開く", className }: Fi
         body: formData,
       });
 
-      setPdfDoc({
+      // The upload already answered with everything the reader needs to open
+      // the book, so hand it to the cache the reader reads from. Without this
+      // the reader would show an empty viewer while it asked for the very
+      // thing that was just sent. A fresh highlight list is right: the book
+      // was uploaded, not annotated.
+      const opened: BookDetail = {
         id: result.id,
         fileName: result.fileName,
         pageCount: result.pageCount,
-      });
-      setPdfStatus("ready");
+        hasThumbnail: extracted.thumbnail !== null,
+        selections: [],
+      };
+      await mutate(bookKey(result.id), opened, { revalidate: false });
+
       onOpened?.(result.id);
     } catch (err) {
-      setPdfError(err instanceof Error ? err.message : "Failed to load PDF");
-      setPdfStatus("error");
+      console.error("Failed to open the PDF:", err);
     } finally {
       // Allow selecting the same file again
       e.target.value = "";

@@ -13,7 +13,7 @@ import {
 import type { SelectionHighlight } from "../../../shared/schemas/selection";
 import type { BookDetail } from "../../../shared/schemas/book";
 import { pdfDocAtom } from "../../atoms/pdfAtom";
-import { bookKey } from "../../hooks/useHighlights";
+import { bookKey } from "../../hooks/useBook";
 import { SwrTestCache } from "../../../test/swrTestCache";
 
 const SELECTED_TEXT = "エッジはサーバーレス実行基盤で、実行単位をまたいでメモリを共有できません。";

@@ -1,6 +1,6 @@
-// oxlint-disable-next-line no-restricted-imports -- URL の pdfId から本を復元するために必要
+// oxlint-disable-next-line no-restricted-imports -- SWR が読んだ本を共有ストア (jotai) の atom へ反映するために必要
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useAtom, useSetAtom } from "jotai";
+import { Provider, useAtom, useSetAtom } from "jotai";
 import { Link, useParams } from "react-router";
 import { pdfDocAtom, pdfStatusAtom, pdfErrorAtom, currentPageAtom } from "../atoms/pdfAtom";
 import {
@@ -12,10 +12,11 @@ import {
 import { PdfViewer } from "../components/PdfViewer/PdfViewer";
 import { ChatArea } from "../components/ChatArea/ChatArea";
 import { SettingsMenu } from "../components/SettingsMenu";
+import { useBook } from "../hooks/useBook";
 import { useReadingLocation } from "../hooks/useReadingLocation";
 import { passageFromNavigation } from "../lib/textFragment";
 import { fetcher } from "../lib/fetcher";
-import { bookDetailSchema, locatedPageSchema } from "../../shared/schemas/book";
+import { locatedPageSchema } from "../../shared/schemas/book";
 import { chatHistorySchema } from "../../shared/schemas/chat";
 
 /** Asks the server which page a passage from a `#:~:text=` link is on. */
@@ -27,11 +28,31 @@ async function locatePassage(pdfId: string, passage: string): Promise<number | n
   return pageNumber;
 }
 
+/**
+ * The reader, with a store of its own per book.
+ *
+ * Everything it holds — the open chat, the passage being asked about, the page
+ * being read — belongs to one book and means nothing under the next one. Giving
+ * the store the book's id as its key throws all of it away in a single step
+ * when another book is opened, instead of resetting each piece by hand and
+ * rendering once with whatever was missed. The book itself survives the swap:
+ * it lives in the SWR cache, which is outside the store.
+ */
 export function AppPage() {
   const { pdfId } = useParams();
-  const [pdfDoc, setPdfDoc] = useAtom(pdfDocAtom);
-  const [, setPdfStatus] = useAtom(pdfStatusAtom);
-  const [, setPdfError] = useAtom(pdfErrorAtom);
+
+  return (
+    <Provider key={pdfId}>
+      <BookReader pdfId={pdfId} />
+    </Provider>
+  );
+}
+
+function BookReader({ pdfId }: { pdfId: string | undefined }) {
+  const { data: book, error } = useBook(pdfId);
+  const setPdfDoc = useSetAtom(pdfDocAtom);
+  const setPdfStatus = useSetAtom(pdfStatusAtom);
+  const setPdfError = useSetAtom(pdfErrorAtom);
   const [, setActiveSelection] = useAtom(activeSelectionAtom);
   const [, setChatMessages] = useAtom(chatMessagesAtom);
   const [, setCurrentPage] = useAtom(currentPageAtom);
@@ -45,40 +66,34 @@ export function AppPage() {
   );
   useReadingLocation(pdfId, locatePassage, linkedPassage);
 
-  // Restore the book from the URL. Without this a reload or a direct link
-  // would land on an empty viewer, since the atom is only filled by an upload.
+  // The viewer and its panels read the open book from the store, so what SWR
+  // holds has to be put there. Depending on the book's fields rather than the
+  // object keeps a highlight being added — which rewrites the cached book —
+  // from running this again.
   useEffect(() => {
-    if (!pdfId || pdfDoc?.id === pdfId) return;
-
-    let cancelled = false;
-    setActiveSelection(null);
-    setChatMessages([]);
+    if (!pdfId) return;
+    if (book) {
+      setPdfDoc({ id: book.id, fileName: book.fileName, pageCount: book.pageCount });
+      setPdfStatus("ready");
+      setPdfError(null);
+      return;
+    }
+    if (error) {
+      setPdfError((error as Error).message);
+      setPdfStatus("error");
+      return;
+    }
     setPdfStatus("loading");
     setPdfError(null);
-
-    fetcher(`/api/pdf/${pdfId}`, bookDetailSchema)
-      .then((book) => {
-        if (cancelled) return;
-        setPdfDoc({ id: book.id, fileName: book.fileName, pageCount: book.pageCount });
-        setPdfStatus("ready");
-      })
-      .catch((err: Error) => {
-        if (cancelled) return;
-        setPdfError(err.message);
-        setPdfStatus("error");
-      });
-
-    return () => {
-      cancelled = true;
-    };
   }, [
     pdfId,
-    pdfDoc?.id,
+    book?.id,
+    book?.fileName,
+    book?.pageCount,
+    error,
     setPdfDoc,
     setPdfStatus,
     setPdfError,
-    setActiveSelection,
-    setChatMessages,
   ]);
 
   // Load chat history when selection changes
@@ -92,11 +107,11 @@ export function AppPage() {
       // Otherwise the conversation left behind shows under the new passage
       // until its own history arrives
       setChatMessages([]);
-      if (!pdfDoc) return;
+      if (!pdfId) return;
 
       try {
         const data = await fetcher(
-          `/api/pdf/${pdfDoc.id}/selections/${selection.id}/chats`,
+          `/api/pdf/${pdfId}/selections/${selection.id}/chats`,
           chatHistorySchema,
         );
 
@@ -105,7 +120,7 @@ export function AppPage() {
         setChatMessages([]);
       }
     },
-    [abortChatStream, pdfDoc, setActiveSelection, setChatMessages, setCurrentPage],
+    [abortChatStream, pdfId, setActiveSelection, setChatMessages, setCurrentPage],
   );
 
   return (
@@ -117,8 +132,8 @@ export function AppPage() {
         <Link to="/" className="ml-4 text-sm text-blue-600 hover:underline">
           ← 本棚
         </Link>
-        {pdfDoc && (
-          <span className="ml-3 text-sm text-gray-500 truncate max-w-xs">{pdfDoc.fileName}</span>
+        {book && (
+          <span className="ml-3 text-sm text-gray-500 truncate max-w-xs">{book.fileName}</span>
         )}
         <div className="ml-auto">
           <SettingsMenu />

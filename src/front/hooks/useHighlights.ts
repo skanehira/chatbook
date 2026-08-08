@@ -1,20 +1,6 @@
 import { useCallback, useMemo } from "react";
-import useSWR from "swr";
-import { fetcher } from "../lib/fetcher";
-import { bookDetailSchema, type BookDetail } from "../../shared/schemas/book";
+import { useBook, fetchBook, type LoadBook } from "./useBook";
 import type { CreatedSelection, SelectionHighlight } from "../../shared/schemas/selection";
-
-/** Reads one book and the highlights made in it. */
-export type LoadBook = (pdfId: string) => Promise<BookDetail>;
-
-/**
- * Cache key of one book. The reader, the viewer and the chat panel all address
- * this key, so a book is read once however many of them are on screen, and a
- * highlight added to it shows up in all of them at once.
- */
-export const bookKey = (pdfId: string) => `/api/pdf/${pdfId}`;
-
-export const fetchBook: LoadBook = (pdfId) => fetcher(bookKey(pdfId), bookDetailSchema);
 
 /** Books saved before highlights carried a colour fall back to the palette. */
 const HIGHLIGHT_COLORS = [
@@ -32,7 +18,7 @@ const NO_HIGHLIGHTS: SelectionHighlight[] = [];
 
 /** The highlights of the book currently open, and a way to add one. */
 export function useHighlights(pdfId: string | undefined, loadBook: LoadBook = fetchBook) {
-  const { data, mutate } = useSWR(pdfId ? bookKey(pdfId) : null, () => loadBook(pdfId!));
+  const { data, mutate } = useBook(pdfId, loadBook);
 
   const highlights = useMemo(
     () =>

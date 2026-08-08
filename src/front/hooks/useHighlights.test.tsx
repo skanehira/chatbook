@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vite-plus/test";
 import { renderHook, act } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { useHighlights, type LoadBook } from "./useHighlights";
+import { useHighlights } from "./useHighlights";
+import type { LoadBook } from "./useBook";
 import { SwrTestCache } from "../../test/swrTestCache";
 import type { BookDetail } from "../../shared/schemas/book";
 import type { CreatedSelection, SelectionHighlight } from "../../shared/schemas/selection";
