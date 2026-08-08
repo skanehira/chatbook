@@ -2,7 +2,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { useAtomValue, useAtom } from "jotai";
 import { currentPageAtom, pageViewportAtom, outlineOpenAtom } from "../../atoms/pdfAtom";
-import { activeSelectionAtom, chatMessagesAtom, type ActiveSelection } from "../../atoms/chatAtom";
+import type { ActiveSelection } from "../../atoms/chatAtom";
 import type { SelectionRect } from "../../../shared/schemas/selection";
 import type { BookDetail } from "../../../shared/schemas/book";
 import { PdfPage } from "./PdfPage";
@@ -15,11 +15,9 @@ import { usePdfDocument } from "../../hooks/usePdfDocument";
 import { usePdfOutline } from "../../hooks/usePdfOutline";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { useWebSearchAtom } from "../../atoms/settingsAtom";
-import { useChatStream } from "../../hooks/useChatStream";
+import { useAskAboutSelection } from "../../hooks/useAskAboutSelection";
 import { useHighlights } from "../../hooks/useHighlights";
 import type { ViewerAction } from "../../lib/keybindings";
-import { fetcher } from "../../lib/fetcher";
-import { createdSelectionSchema } from "../../../shared/schemas/selection";
 
 interface PdfViewerProps {
   /** The book being read, or nothing while it is still being read in. */
@@ -34,8 +32,6 @@ const SCROLL_STEP = 80;
 
 export function PdfViewer({ book, bookError, onSelectionClick }: PdfViewerProps) {
   const [currentPage, setCurrentPage] = useAtom(currentPageAtom);
-  const [, setActiveSelection] = useAtom(activeSelectionAtom);
-  const [, setChatMessages] = useAtom(chatMessagesAtom);
   const useWebSearch = useAtomValue(useWebSearchAtom);
   const viewport = useAtomValue(pageViewportAtom);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -61,7 +57,7 @@ export function PdfViewer({ book, bookError, onSelectionClick }: PdfViewerProps)
   const { highlights, addHighlight } = useHighlights(book?.id);
   const { pdfDocument } = usePdfDocument(book);
   const { outline } = usePdfOutline(pdfDocument);
-  const { sendMessage } = useChatStream();
+  const { askAboutSelection, saveError } = useAskAboutSelection(addHighlight);
 
   const pageCount = book?.pageCount ?? 1;
   const handleShortcut = useCallback(
@@ -196,46 +192,27 @@ export function PdfViewer({ book, bookError, onSelectionClick }: PdfViewerProps)
   const handlePopoverSubmit = useCallback(
     async (question: string) => {
       if (!popoverState || !book) return;
-      setPopoverState(null);
 
-      try {
-        const selection = await fetcher(`/api/pdf/${book.id}/selections`, createdSelectionSchema, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            selectedText: popoverState.selectedText,
-            pageNumber: popoverState.selectionPosition.pageNumber,
-            // The rest of the measurement (the text offsets the passage was
-            // found at) is stripped by the endpoint.
-            positionData: popoverState.selectionPosition,
-          }),
-        });
+      const asked = await askAboutSelection(
+        book.id,
+        {
+          selectedText: popoverState.selectedText,
+          pageNumber: popoverState.selectionPosition.pageNumber,
+          // The rest of the measurement (the text offsets the passage was
+          // found at) is stripped by the endpoint.
+          positionData: popoverState.selectionPosition,
+        },
+        question,
+        useWebSearch,
+      );
 
-        addHighlight(selection);
-
-        // Open the chat for this selection, then stream the answer into it.
-        // Going through sendMessage is what shows the question immediately and
-        // renders the answer as it arrives.
-        setActiveSelection({
-          id: selection.id,
-          selectedText: selection.selectedText,
-          pageNumber: selection.pageNumber,
-        });
-        setChatMessages([]);
-        await sendMessage(book.id, selection.id, question, useWebSearch);
-      } catch (err) {
-        console.error("Failed to create selection:", err);
-      }
+      // Closing on the stored highlight rather than on the answer: the answer
+      // takes seconds, and a popover held open for it would sit over the page
+      // the whole time. A highlight that was not stored keeps the popover, and
+      // the question in it, so the reader can send it again.
+      if (asked.isOk()) setPopoverState(null);
     },
-    [
-      popoverState,
-      book,
-      addHighlight,
-      useWebSearch,
-      setActiveSelection,
-      setChatMessages,
-      sendMessage,
-    ],
+    [popoverState, book, askAboutSelection, useWebSearch],
   );
 
   const handlePopoverDismiss = useCallback(() => {
@@ -272,6 +249,12 @@ export function PdfViewer({ book, bookError, onSelectionClick }: PdfViewerProps)
         <div className="flex items-center justify-center flex-1">
           <div className="text-gray-500 text-lg">PDFを読み込み中...</div>
         </div>
+      ) : null}
+
+      {saveError !== null ? (
+        <p role="alert" className="m-2 rounded-md bg-red-50 p-3 text-sm text-red-600">
+          {saveError}
+        </p>
       ) : null}
 
       {pdfDocument && (
