@@ -1,5 +1,27 @@
 import OpenAI from "openai";
+import { z } from "zod";
 import type { LlmMessage } from "./chatService";
+
+/**
+ * The Responses API events this reader acts on.
+ *
+ * A `delta` is only ever appended to the answer when it really is text: the
+ * stream also carries deltas for annotations and tool calls, and one of those
+ * used to land in the saved answer as "[object Object]". Everything that does
+ * not match — including an empty delta — is skipped.
+ */
+const responseStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("response.output_text.delta"),
+    delta: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("response.completed"),
+    usage: z
+      .object({ input_tokens: z.number().optional(), output_tokens: z.number().optional() })
+      .optional(),
+  }),
+]);
 
 interface StreamCallbacks {
   onToken: (token: string) => void;
@@ -152,25 +174,26 @@ export async function streamResponseWithWebSearch(
       buffer = lines.pop() || "";
 
       for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const data = JSON.parse(line.slice(6));
+        if (!line.startsWith("data: ")) continue;
 
-            // Handle text delta
-            if (data.type === "response.output_text.delta" && data.delta) {
-              callbacks.onToken(data.delta);
-            }
+        let payload: unknown;
+        try {
+          payload = JSON.parse(line.slice(6));
+        } catch {
+          // Skip parse errors for partial chunks
+          continue;
+        }
 
-            // Handle completion
-            if (data.type === "response.completed" && data.usage) {
-              usage = {
-                inputTokens: data.usage.input_tokens ?? 0,
-                outputTokens: data.usage.output_tokens ?? 0,
-              };
-            }
-          } catch {
-            // Skip parse errors for partial chunks
-          }
+        const event = responseStreamEventSchema.safeParse(payload);
+        if (!event.success) continue;
+
+        if (event.data.type === "response.output_text.delta") {
+          callbacks.onToken(event.data.delta);
+        } else if (event.data.usage) {
+          usage = {
+            inputTokens: event.data.usage.input_tokens ?? 0,
+            outputTokens: event.data.usage.output_tokens ?? 0,
+          };
         }
       }
     }
