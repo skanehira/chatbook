@@ -18,7 +18,7 @@ import {
   tokenEvent,
 } from "../../test/streamingFetchStub";
 import { ApiError } from "../lib/fetcher";
-import type { Citation } from "../atoms/chatAtom";
+import type { Citation } from "../../shared/schemas/citation";
 
 const QUESTION = "Durable Objects とは?";
 

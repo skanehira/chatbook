@@ -2,9 +2,10 @@ import { describe, it, expect } from "vite-plus/test";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useParams } from "react-router";
-import { ShelfPage, type Book } from "./ShelfPage";
+import { ShelfPage } from "./ShelfPage";
+import type { BookSummary } from "../../shared/schemas/book";
 
-function book(overrides: Partial<Book> = {}): Book {
+function book(overrides: Partial<BookSummary> = {}): BookSummary {
   return {
     id: "book-1",
     fileName: "Cloudflare Workers 入門.pdf",
@@ -16,7 +17,7 @@ function book(overrides: Partial<Book> = {}): Book {
 }
 
 function renderShelf(props: {
-  loadBooks?: () => Promise<Book[]>;
+  loadBooks?: () => Promise<BookSummary[]>;
   deleteBook?: (id: string) => Promise<unknown>;
 }) {
   render(

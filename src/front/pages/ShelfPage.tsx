@@ -5,8 +5,6 @@ import { FileSelector } from "../components/PdfViewer/FileSelector";
 import { fetcher } from "../lib/fetcher";
 import { bookDeletedSchema, bookListSchema, type BookSummary } from "../../shared/schemas/book";
 
-export type Book = BookSummary;
-
 /** Module-level so the effect below keeps a stable dependency. */
 const fetchBooks = () => fetcher("/api/pdfs", bookListSchema).then((data) => data.books);
 
@@ -14,7 +12,7 @@ const requestBookDeletion = (id: string) =>
   fetcher(`/api/pdf/${id}`, bookDeletedSchema, { method: "DELETE" });
 
 interface ShelfPageProps {
-  loadBooks?: () => Promise<Book[]>;
+  loadBooks?: () => Promise<BookSummary[]>;
   deleteBook?: (id: string) => Promise<unknown>;
 }
 
@@ -27,9 +25,9 @@ function BookCard({
   onOpen,
   onDelete,
 }: {
-  book: Book;
+  book: BookSummary;
   onOpen: (id: string) => void;
-  onDelete: (book: Book) => void;
+  onDelete: (book: BookSummary) => void;
 }) {
   const [coverFailed, setCoverFailed] = useState(false);
   const showCover = book.hasThumbnail && !coverFailed;
@@ -81,7 +79,7 @@ function DeleteConfirmDialog({
   onConfirm,
   onCancel,
 }: {
-  book: Book;
+  book: BookSummary;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -133,9 +131,9 @@ export function ShelfPage({
   deleteBook = requestBookDeletion,
 }: ShelfPageProps = {}) {
   const navigate = useNavigate();
-  const [books, setBooks] = useState<Book[] | null>(null);
+  const [books, setBooks] = useState<BookSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [bookPendingDeletion, setBookPendingDeletion] = useState<Book | null>(null);
+  const [bookPendingDeletion, setBookPendingDeletion] = useState<BookSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,7 +154,7 @@ export function ShelfPage({
 
   const openBook = useCallback((id: string) => navigate(`/books/${id}`), [navigate]);
 
-  const removeBook = async (book: Book) => {
+  const removeBook = async (book: BookSummary) => {
     setError(null);
     setBookPendingDeletion(null);
     try {

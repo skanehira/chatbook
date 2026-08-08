@@ -1,7 +1,5 @@
 import type { SelectionRect } from "../../shared/schemas/selection";
 
-export type { SelectionRect } from "../../shared/schemas/selection";
-
 /** Two rects belong to the same line when their tops are within this share of a line's height. */
 const SAME_LINE_RATIO = 0.5;
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vite-plus/test";
 import { render, screen } from "@testing-library/react";
 import { ChatMessageList } from "./ChatMessageList";
-import type { ChatMessage } from "../../atoms/chatAtom";
+import type { ChatMessage } from "../../../shared/schemas/chat";
 
 const question: ChatMessage = {
   id: "m1",

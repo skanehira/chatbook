@@ -10,8 +10,8 @@ import {
   isStreamingAtom,
   selectionsAtom,
   type ActiveSelection,
-  type SelectionHighlight,
 } from "../../atoms/chatAtom";
+import type { SelectionHighlight } from "../../../shared/schemas/selection";
 import { pdfDocAtom } from "../../atoms/pdfAtom";
 
 const SELECTED_TEXT = "エッジはサーバーレス実行基盤で、実行単位をまたいでメモリを共有できません。";

@@ -1,7 +1,7 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import type { ChatMessage } from "../../atoms/chatAtom";
+import type { ChatMessage } from "../../../shared/schemas/chat";
 import { CitationBadge } from "./CitationBadge";
 import { stripSources } from "../../lib/stripSources";
 

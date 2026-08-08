@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { Provider, createStore } from "jotai";
 import { CitationBadge } from "./CitationBadge";
 import { currentPageAtom } from "../../atoms/pdfAtom";
-import type { Citation } from "../../atoms/chatAtom";
+import type { Citation } from "../../../shared/schemas/citation";
 
 function renderBadge(citation: Citation) {
   const store = createStore();

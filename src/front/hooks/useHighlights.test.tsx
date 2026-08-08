@@ -3,7 +3,8 @@ import { renderHook, act } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
 import type { ReactNode } from "react";
 import { useHighlights, type LoadSelections } from "./useHighlights";
-import { selectionsAtom, type SelectionHighlight } from "../atoms/chatAtom";
+import { selectionsAtom } from "../atoms/chatAtom";
+import type { SelectionHighlight } from "../../shared/schemas/selection";
 import type { PdfDoc } from "../atoms/pdfAtom";
 
 const BOOK_A: PdfDoc = { id: "bookA", fileName: "Workers.pdf", pageCount: 209 };

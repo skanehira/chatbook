@@ -1,7 +1,8 @@
 // oxlint-disable-next-line no-restricted-imports -- 開いている本に合わせてハイライトを読み直すために必要
 import { useEffect } from "react";
 import { useSetAtom } from "jotai";
-import { selectionsAtom, type SelectionHighlight } from "../atoms/chatAtom";
+import { selectionsAtom } from "../atoms/chatAtom";
+import type { SelectionHighlight } from "../../shared/schemas/selection";
 import type { PdfDoc } from "../atoms/pdfAtom";
 
 export type LoadSelections = (pdfId: string) => Promise<SelectionHighlight[]>;

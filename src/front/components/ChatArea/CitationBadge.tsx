@@ -1,5 +1,5 @@
 import { useSetAtom } from "jotai";
-import type { Citation } from "../../atoms/chatAtom";
+import type { Citation } from "../../../shared/schemas/citation";
 import { currentPageAtom } from "../../atoms/pdfAtom";
 
 interface CitationBadgeProps {

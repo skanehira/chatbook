@@ -15,14 +15,14 @@ import {
   selectionsAtom,
   useWebSearchAtom,
   type ActiveSelection,
-  type SelectionHighlight,
 } from "../../atoms/chatAtom";
+import type { SelectionRect, SelectionHighlight } from "../../../shared/schemas/selection";
 import { PdfPage } from "./PdfPage";
 import { PdfOutline } from "./PdfOutline";
 import { SelectionPopover } from "./SelectionPopover";
 import { HighlightOverlay } from "./HighlightOverlay";
 import { getSelectionFromTextLayer } from "../../lib/pdfTextMatcher";
-import { selectionOnPage, type PageSelection, type SelectionRect } from "../../lib/selectionRects";
+import { selectionOnPage, type PageSelection } from "../../lib/selectionRects";
 import { usePdfDocument } from "../../hooks/usePdfDocument";
 import { usePdfOutline } from "../../hooks/usePdfOutline";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";

@@ -6,11 +6,11 @@ import {
   isStreamingAtom,
   chatAbortControllerAtom,
   abortChatStreamAtom,
-  type ChatMessage,
-  type Citation,
 } from "../atoms/chatAtom";
 import { createSseParser } from "../lib/sseParser";
 import { ApiError } from "../lib/fetcher";
+import type { ChatMessage } from "../../shared/schemas/chat";
+import type { Citation } from "../../shared/schemas/citation";
 import { chatSseEventSchema } from "../../shared/schemas/sse";
 
 /** fetch reports an abort with a DOMException, which does not extend Error. */

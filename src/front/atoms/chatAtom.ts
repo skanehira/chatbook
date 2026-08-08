@@ -2,10 +2,6 @@ import { atom } from "jotai";
 import type { ChatMessage } from "../../shared/schemas/chat";
 import type { SelectionHighlight } from "../../shared/schemas/selection";
 
-export type { ChatMessage } from "../../shared/schemas/chat";
-export type { Citation } from "../../shared/schemas/citation";
-export type { SelectionHighlight } from "../../shared/schemas/selection";
-
 /** The highlighted passage the current conversation is about. */
 export interface ActiveSelection {
   id: string;
