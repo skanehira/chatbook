@@ -55,6 +55,30 @@ describe("fetcher", () => {
     ]);
   });
 
+  it("lets a request that never reached the server through as the failure fetch reported", async () => {
+    // Only failures the server described are ApiError. A connection that never
+    // produced a response has no code or status to report, and callers that
+    // handle an abort look at the original error's name.
+    const offline: typeof fetch = () => Promise.reject(new TypeError("Failed to fetch"));
+
+    const failed = fetcher("/api/pdf/b1", bookSchema, undefined, offline);
+
+    const error = (await failed.catch((err: unknown) => err)) as TypeError;
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error).not.toBeInstanceOf(ApiError);
+    expect(error.message).toBe("Failed to fetch");
+  });
+
+  it("lets an aborted request through with the name callers check for", async () => {
+    const aborted: typeof fetch = () =>
+      Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
+
+    const failed = fetcher("/api/pdf/b1", bookSchema, undefined, aborted);
+
+    const error = (await failed.catch((err: unknown) => err)) as DOMException;
+    expect([error.name, error.message]).toStrictEqual(["AbortError", "The operation was aborted."]);
+  });
+
   it("refuses a successful response whose body is not what the caller asked for", async () => {
     // Without this the caller's type annotation is a wish: the old fetcher
     // handed the body straight on, so pageCount could be a string at runtime.

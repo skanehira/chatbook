@@ -115,11 +115,18 @@ interface StoredMessage {
   createdAt: string;
 }
 
-/** The conversation as it was saved, which is what a reopened chat shows. */
+/**
+ * The conversation as it was saved, which is what a reopened chat shows.
+ *
+ * The status is asserted here so that a conversation which fails to load shows
+ * up as "expected 500 to be 200" rather than as a JSON parse error on the
+ * words "Internal Server Error".
+ */
 async function readChatHistory(pdfId: string, selectionId: string): Promise<StoredMessage[]> {
   const response = await SELF.fetch(
     `https://example.com/api/pdf/${pdfId}/selections/${selectionId}/chats`,
   );
+  expect(response.status).toBe(200);
   const { messages } = (await response.json()) as { messages: StoredMessage[] };
   return messages;
 }

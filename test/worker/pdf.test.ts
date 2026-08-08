@@ -333,6 +333,23 @@ describe("PDF thumbnails", () => {
     expect(getResponse.status).toBe(404);
   });
 
+  it("stores a cover of exactly the size limit", async () => {
+    const book = await uploadBook({ tag: "thumb-at-limit", fileName: "at-limit.pdf" });
+    const atLimit = new Uint8Array(2 * 1024 * 1024);
+    atLimit.set(FAKE_WEBP, 0);
+
+    const putResponse = await SELF.fetch(`https://example.com/api/pdf/${book.id}/thumbnail`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/webp" },
+      body: atLimit,
+    });
+
+    expect(putResponse.status).toBe(200);
+    const getResponse = await SELF.fetch(`https://example.com/api/pdf/${book.id}/thumbnail`);
+    expect(getResponse.status).toBe(200);
+    expect((await getResponse.arrayBuffer()).byteLength).toBe(2 * 1024 * 1024);
+  });
+
   it("refuses a cover far larger than a rendered page", async () => {
     const book = await uploadBook({ tag: "thumb-too-big", fileName: "too-big.pdf" });
     const oversized = new Uint8Array(2 * 1024 * 1024 + 1);
@@ -487,6 +504,22 @@ describe("GET /api/pdf/:pdfId/locate", () => {
     });
   });
 
+  it("looks up a passage of exactly the length limit", async () => {
+    const passage = "あ".repeat(2000);
+    const book = await uploadBook({
+      tag: "locate-at-limit",
+      fileName: "locate-at-limit.pdf",
+      pages: ["まえがき", passage],
+    });
+
+    const response = await SELF.fetch(
+      `https://example.com/api/pdf/${book.id}/locate?text=${encodeURIComponent(passage)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toStrictEqual({ pageNumber: 2 });
+  });
+
   it("refuses a passage longer than any quotable one instead of scanning the book for it", async () => {
     const book = await uploadBook({ tag: "locate-long", fileName: "locate-long.pdf" });
 
@@ -519,9 +552,16 @@ async function postSelection(pdfId: string, body: unknown): Promise<Response> {
   });
 }
 
-/** The highlights of a book, as the viewer receives them. */
+/**
+ * The highlights of a book, as the viewer receives them.
+ *
+ * The status is asserted here so that a book which fails to open shows up as
+ * "expected 500 to be 200" rather than as a JSON parse error on the words
+ * "Internal Server Error".
+ */
 async function readSelections(pdfId: string): Promise<Record<string, unknown>[]> {
   const response = await SELF.fetch(`https://example.com/api/pdf/${pdfId}`);
+  expect(response.status).toBe(200);
   const { selections } = (await response.json()) as { selections: Record<string, unknown>[] };
   return selections;
 }
