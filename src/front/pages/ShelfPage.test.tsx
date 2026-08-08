@@ -90,7 +90,7 @@ describe("ShelfPage", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "削除する" }));
 
-    expect(deletedIds).toEqual(["book-1"]);
+    expect(deletedIds).toStrictEqual(["book-1"]);
     expect(
       screen.queryByRole("button", { name: "Cloudflare Workers 入門 を開く" }),
     ).not.toBeInTheDocument();
@@ -122,7 +122,7 @@ describe("ShelfPage", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "キャンセル" }));
 
-    expect(deletedIds).toEqual([]);
+    expect(deletedIds).toStrictEqual([]);
     expect(
       screen.getByRole("button", { name: "Cloudflare Workers 入門 を開く" }),
     ).toBeInTheDocument();
@@ -158,7 +158,7 @@ describe("ShelfPage", () => {
     );
     await userEvent.keyboard("{Escape}");
 
-    expect(deletedIds).toEqual([]);
+    expect(deletedIds).toStrictEqual([]);
     expect(
       screen.getByRole("button", { name: "Cloudflare Workers 入門 を開く" }),
     ).toBeInTheDocument();
@@ -175,7 +175,7 @@ describe("ShelfPage", () => {
     // The backdrop is the dialog's own wrapper; it has no role of its own
     await userEvent.click(screen.getByRole("alertdialog").parentElement!);
 
-    expect(deletedIds).toEqual([]);
+    expect(deletedIds).toStrictEqual([]);
     expect(
       screen.getByRole("button", { name: "Cloudflare Workers 入門 を開く" }),
     ).toBeInTheDocument();
