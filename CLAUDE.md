@@ -135,23 +135,44 @@ union + `satisfies` で固定する。
 **失敗はユーザーに見える形にするか、握りつぶす理由をコメントに書くかのどちらかにする。**
 `console.error` だけで済ませない（それは前者でも後者でもない）。
 
-- **サーバの service は `ResultAsync`**。エラー型は `src/server/services/serviceError.ts` の
-  `ServiceError = { type: "NOT_FOUND" } | { type: "STORAGE"; cause }` の 2 つだけ。route が
-  `.match()` で封筒に落とす（`src/server/routes/pdf.ts` の `serviceFailureResponse` /
-  `storageFailureResponse`）。「無い」は各エンドポイントの言葉で 404、「ストアが応答しない」は
-  一律 `INTERNAL_ERROR` の 500 で、`cause` はサーバのログにだけ出す
-- **想定外の throw と未定義パスは `src/server/index.ts` の `app.onError` / `notFound` が拾う**。
+- **D1 / R2 に触る service は `ResultAsync`**（現状 `pdfService.ts` の 4 関数）。エラー型は
+  `src/server/services/serviceError.ts` の
+  `ServiceError = { type: "NOT_FOUND" } | { type: "STORAGE"; cause }` の 2 つだけで、
+  `notFound()` / `storageFailure(cause)` が作る。route が `.match()` で封筒に落とす
+  （`src/server/routes/pdf.ts` の `serviceFailureResponse` が 404、`storageFailureResponse`
+  が 500 を組み立てる。**名前が似ているが、`storageFailure` は service が返す値、
+  `storageFailureResponse` は route が返すレスポンス**）。「無い」は各エンドポイントの言葉で
+  404、「ストアが応答しない」は一律 `INTERNAL_ERROR` の 500 で、`cause` はサーバのログにだけ
+  出す。バインディングに触らない service（`chatService.ts` は純粋関数、`deepseekService.ts`
+  は throw + callbacks でストリームを運ぶ）はこの対象外
+- **想定外の throw と未定義パスは `src/server/index.ts` の `app.onError` / `notFound` が拾う**
+  （それぞれ `INTERNAL_ERROR` / `ROUTE_NOT_FOUND`。どちらも `shared/schemas/error.ts` の
+  `ERROR_CODES` に載っており、`index.ts` が `satisfies ErrorCode` で固定して唯一発行する）。
   Hono の既定は `text/plain` の "Internal Server Error" を返し、これは封筒ではないので
   `fetcher` からは `UNKNOWN` にしか見えない。`/api/*` だけが Worker に来る
   （`wrangler.jsonc` の `run_worker_first`）ので、`notFound` が SPA の直リンクを奪うことはない
 - **フロントの読み取り（SWR）は throw ベースの `fetcher` のまま**。SWR の `error` state が
   その境界の Result そのもので、`Err` に変換して戻すのは往復の無駄
-- **mutation とイベントハンドラ起点の 1 回きりの取得は `resultFetcher`**
+- **失敗を画面に出す mutation とイベントハンドラ起点の 1 回きりの取得は `resultFetcher`**
   （`ResultAsync<T, ApiError>`）。受け皿になる SWR が無いので、失敗は値で返さないと消える。
-  `fetch` 自体の reject もここで包むため、`ApiError.kind` で `http` / `network` / `parse` を
-  区別できる（`network` の `code` は `NETWORK_ERROR` / `ABORTED`、`status` は 0）
+  現在の該当箇所は本の削除（`ShelfPage`）・アップロード（`FileSelector`）・ハイライトの作成
+  （`useAskAboutSelection`）・チャット履歴の取得（`AppPage`）の 4 つ。
+  **例外は `usePdfDocument.ts` の `storeCoverIfMissing`** で、これは失敗を出さないと決めた
+  書き込み（下記「意図的に握りつぶす」）なので `fetcher` + try/catch のままでよい
+- **`ApiError` の `kind`** は `http`（サーバが拒否した）/ `parse`（返ってきた形が違う）/
+  `network`（応答が無い）。`parse` は `fetcher` も立てるので throw 経路にも現れる。
+  `network` だけは `resultFetcher` でしか作られない（`fetcher` は fetch の reject を包まない）。
+  クライアント固有の `code` は `fetcher.ts` の `CLIENT_ERROR_CODES` に集約してあり
+  （`UNKNOWN` / `INVALID_RESPONSE` / `NETWORK_ERROR` / `ABORTED`）、**リテラルで書かないこと**——
+  `ApiError.code` は `string` なので typo しても型で落ちない
 - **レンダー中の throw は Result では拾えない**ので、`src/front/routes.tsx` が両ルートに
   `errorElement`（`src/front/components/RouteErrorBoundary.tsx`）を張る
+
+**表示する文言は、それを描くコンポーネントが組み立てる。**フックは理由（サーバや例外の
+`message`）だけを返す——`usePdfDocument` / `usePdfOutline` / `useAskAboutSelection` /
+`PdfPage` の `onError` はすべてこの形で、前置きは `PdfViewer` と `PdfOutline` が付ける。
+**例外は `chatErrorAtom` ただ 1 つ**で、書き手が複数（送信の失敗と履歴の取得失敗）・読み手が
+1 つ（`ChatArea`）なので、完成した文を atom が持つ。
 
 失敗の受け皿と表示場所は次のとおり。新しい失敗を足すときはこの表のどれかに合流させる:
 
@@ -167,14 +188,28 @@ union + `satisfies` で固定する。
 | リンク先の passage が見つからない | `useReadingLocation` の `passageNotFound`             | ヘッダ直下の帯                             |
 
 `chatErrorAtom` だけ二重の口がある。**atom が表示の正、`sendMessage` の戻り値
-（`ResultAsync<MessageId, ApiError>`）は呼び出し元のフロー制御用**という分担で、戻り値を
-捨てた呼び出し元があっても画面が無言にならないようにしてある。新しい送信の開始と、
-別のハイライトを開いたときにクリアする。
+（`ResultAsync<string, ApiError>`。成功時の値は保存された回答の id）は呼び出し元の
+フロー制御用**という分担で、戻り値を捨てた呼び出し元があっても画面が無言にならないように
+してある。新しい送信の開始と、別のハイライトを開いたときにクリアする。
 
-意図的に握りつぶしているのは 3 種類だけで、いずれも理由をコメントに書いてある:
-表紙（`pdfLoader.ts` の生成と `usePdfDocument.ts` の後追い保存。本棚がタイトルで代替する）、
-SSE 断片のパース（`sseParser.ts` / `deepseekService.ts`）、クライアント切断後の送信
-（`routes/pdf.ts`。回答の保存を守るため）。
+#### 意図的に握りつぶす
+
+次の 7 箇所は失敗を画面に出さない。いずれも理由をコメントに書いてあり、**理由を書かずに
+握りつぶしを増やさないこと**:
+
+| 箇所                                                         | 握りつぶす理由                                                       |
+| ------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `pdfLoader.ts` の表紙生成 / `usePdfDocument.ts` の後追い保存 | 表紙は装飾。本棚がタイトルで代替する                                 |
+| `sseParser.ts` / `deepseekService.ts` の断片パース           | ストリームの 1 ブロックが壊れても残りは使える                        |
+| `routes/pdf.ts` のクライアント切断後の送信                   | throw を通すと回答の保存に届かない                                   |
+| `pdfService.ts` の `readPositionData`                        | 壊れた 1 行で本ごと開けなくしない（下記「`positionData` の正準形」） |
+| `chatService.ts` の `readCitations`                          | 出典が読めなくても回答そのものは見せる                               |
+| `textFragment.ts` のリンク解析                               | 解析できない = passage へのリンクではない、という正常系              |
+| `usePdfOutline.ts` の `resolvePageNumber`                    | dest が解けない 1 項目はページ無しで並べ、残りは使える               |
+
+`SelectionPopover` の `onSubmit` を囲む catch も握りつぶしだが、これは**報告しないため
+ではなく報告する主体が別だから**（質問の失敗は `useAskAboutSelection` が受け持つ。
+ここで再 throw するとイベントハンドラの外へ抜け、`errorElement` にも届かない）。
 
 #### `positionData` の正準形
 
@@ -235,9 +270,17 @@ SSE 断片のパース（`sseParser.ts` / `deepseekService.ts`）、クライア
 - **回答を保存できなかったときは `done` ではなく `event: error`（`CHAT_SAVE_FAILED`）を送る**。
   保存前に `done` を送ると、画面には回答が出そろっているのにリロードで消える。
   ここを `.catch(console.error)` に戻さないこと
+- **`CHAT_SAVE_FAILED` だけは回答を画面に残す**。他の `event: error` は生成が途中で切れた
+  ことを意味するので断片を捨てるが、これは回答が完成したうえで書き込みだけが落ちた場合で、
+  消すと読むこともコピーすることもできなくなる（生成コストは既に払っている）。
+  `useChatStream` がこのコードで分岐し、`chatFailureMessage` も「取得に失敗」ではなく
+  「保存できませんでした」と言い換える
 - ポップオーバーからの初回質問は**保存された回答を待たない**。`sendMessage` の完了を待つと
   ポップオーバーが 10 秒前後ページを覆う。閉じる合図はハイライトの保存が成功したこと
   （`useAskAboutSelection`）で、ストリーム自体の失敗は `chatErrorAtom` が受ける
+- **ポップオーバーは保存が終わるまで開いたままなので、送信中フラグが要る**
+  （`SelectionPopover` の `asking`）。無いと 2 回目の送信がハイライトを二重に作り、
+  2 本目の回答が 1 本目を `abortChatStream` で殺す。`onSubmit` を await する型なのはこのため
 
 ### DeepSeek の呼び分け
 
@@ -280,9 +323,10 @@ SWR の使い方で押さえるところ:
   「外部入力のバリデーション（zod）」）。`useSWR(key, () => fetch(...).then(r => r.json()))`
   のように生 `fetch` を渡すとスキーマ検証を素通りし、`ApiError` / `INVALID_RESPONSE`
   の防護が消える。SWR の `error` state が受け止めるので、ここは throw する `fetcher` の
-  ままでよく、`resultFetcher` に替えない。現在の SWR 呼び出しは全て `fetcher` 経由
-  （PDF バイナリの取得だけは JSON ではないので `usePdfDocument` が生の fetch を使い、
-  拒否の読み取りだけ `readRefusal` を通す。これは SWR ではない）
+  ままでよく、`resultFetcher` に替えない。現在の SWR 呼び出しは全て `fetcher` 経由。
+  **JSON ではない 2 つ——PDF バイナリ（`usePdfDocument`）とチャットの SSE
+  （`useChatStream`）——だけが生の `fetch` を直接使う**。どちらも SWR ではなく、拒否の
+  読み取りは `fetcher.ts` の `readRefusal` を通して同じ文言に揃える
 - **ルートの `SWRConfig`**（`src/front/main.tsx`）で `revalidateOnFocus` を切っている。
   ローカル単一ユーザーのアプリでデータは自分の操作でしか変わらず、focus 復帰の再検証は
   Playwright のフォーカス往復で E2E を非決定にするだけ
@@ -309,8 +353,12 @@ SWR の使い方で押さえるところ:
   `keybindingModeAtom` / `useWebSearchAtom` がその形）
 - **テストの差し替え口は 2 つある**。取得そのものを差し替えるなら DI 引数——
   `useBook(pdfId, loadBook)` / `useHighlights(pdfId, loadBook)` /
+  `usePdfDocument(book, fetchFn)` / `useChatStream(fetchFn, now)` /
   `useAskAboutSelection(addHighlight, saveSelection)` /
-  `ShelfPage({ loadBooks, deleteBook, extract })` / `FileSelector({ extract })` がその口。
+  `ShelfPage({ loadBooks, deleteBook, extract })` / `FileSelector({ extract })` /
+  `PdfViewer({ measureSelection, saveSelection })` がその口。`measureSelection` は
+  ポップオーバーを開く唯一の入口で、**実 DOM 選択と pdf.js が描いたページを両方要求する
+  経路（質問・保存失敗の表示・二重送信の防止）を jsdom で動かすための seam**。
   キャッシュの中身を用意したいなら `src/test/swrTestCache.tsx` の `SwrTestCache` で包む
   （SWR の既定キャッシュはモジュールレベルの singleton なので、包まないとテストが互いの
   キャッシュを見て実行順に依存する。`seed` を渡すとそのキーをサーバの代わりに使う）。
