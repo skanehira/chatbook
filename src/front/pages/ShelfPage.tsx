@@ -4,12 +4,19 @@ import { useNavigate } from "react-router";
 import { FileSelector } from "../components/PdfViewer/FileSelector";
 import { fetcher } from "../lib/fetcher";
 
-interface Book {
+export interface Book {
   id: string;
   fileName: string;
   pageCount: number;
   updatedAt: string;
   hasThumbnail: boolean;
+}
+
+/** Module-level so the effect below keeps a stable dependency. */
+const fetchBooks = () => fetcher<{ books: Book[] }>("/api/pdfs").then((data) => data.books);
+
+interface ShelfPageProps {
+  loadBooks?: () => Promise<Book[]>;
 }
 
 function bookTitle(fileName: string): string {
@@ -22,55 +29,58 @@ function BookCard({ book, onOpen }: { book: Book; onOpen: (id: string) => void }
   const title = bookTitle(book.fileName);
 
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(book.id)}
-      className="group flex w-full flex-col text-left cursor-pointer focus:outline-none"
-    >
-      <div className="relative aspect-3/4 w-full overflow-hidden rounded-r-md rounded-l-sm border-l-4 border-gray-300 bg-gray-100 shadow-md transition-all group-hover:-translate-y-1 group-hover:shadow-xl group-focus-visible:ring-2 group-focus-visible:ring-blue-500">
-        {showCover ? (
-          <img
-            src={`/api/pdf/${book.id}/thumbnail`}
-            alt={`${title} の表紙`}
-            loading="lazy"
-            onError={() => setCoverFailed(true)}
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center bg-linear-to-br from-slate-600 to-slate-800 p-3">
-            <span className="line-clamp-5 text-center text-xs font-medium text-white/90">
-              {title}
-            </span>
-          </div>
-        )}
-      </div>
-      <p className="mt-2 line-clamp-2 text-sm font-medium text-gray-800">{title}</p>
-      <p className="text-xs text-gray-500">{book.pageCount} ページ</p>
-    </button>
+    <div className="relative group/card">
+      <button
+        type="button"
+        aria-label={`${title} を開く`}
+        onClick={() => onOpen(book.id)}
+        className="group flex w-full flex-col text-left cursor-pointer focus:outline-none"
+      >
+        <div className="relative aspect-3/4 w-full overflow-hidden rounded-r-md rounded-l-sm border-l-4 border-gray-300 bg-gray-100 shadow-md transition-all group-hover:-translate-y-1 group-hover:shadow-xl group-focus-visible:ring-2 group-focus-visible:ring-blue-500">
+          {showCover ? (
+            <img
+              src={`/api/pdf/${book.id}/thumbnail`}
+              alt={`${title} の表紙`}
+              loading="lazy"
+              onError={() => setCoverFailed(true)}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-linear-to-br from-slate-600 to-slate-800 p-3">
+              <span className="line-clamp-5 text-center text-xs font-medium text-white/90">
+                {title}
+              </span>
+            </div>
+          )}
+        </div>
+        <p className="mt-2 line-clamp-2 text-sm font-medium text-gray-800">{title}</p>
+        <p className="text-xs text-gray-500">{book.pageCount} ページ</p>
+      </button>
+    </div>
   );
 }
 
-export function ShelfPage() {
+export function ShelfPage({ loadBooks = fetchBooks }: ShelfPageProps = {}) {
   const navigate = useNavigate();
   const [books, setBooks] = useState<Book[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetcher<{ books: Book[] }>("/api/pdfs")
-      .then((data) => {
-        if (!cancelled) setBooks(data.books);
+    loadBooks()
+      .then((loaded) => {
+        if (!cancelled) setBooks(loaded);
       })
       .catch((err: Error) => {
         if (!cancelled) {
-          setError(err.message);
+          setError(`本棚の読み込みに失敗しました: ${err.message}`);
           setBooks([]);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadBooks]);
 
   const openBook = useCallback((id: string) => navigate(`/books/${id}`), [navigate]);
 
@@ -82,11 +92,7 @@ export function ShelfPage() {
       </header>
 
       <main className="mx-auto max-w-6xl p-6">
-        {error && (
-          <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-600">
-            本棚の読み込みに失敗しました: {error}
-          </p>
-        )}
+        {error && <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</p>}
 
         {books === null && <p className="text-sm text-gray-500">読み込み中...</p>}
 
