@@ -62,7 +62,10 @@ interface PdfResponse {
   selections?: unknown[];
 }
 
-const FAKE_WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x00, 0x57, 0x45, 0x42, 0x50]);
+/** The 12-byte RIFF/WEBP header a cover has to start with, and nothing more. */
+const FAKE_WEBP = new Uint8Array([
+  0x52, 0x49, 0x46, 0x46, 0x0c, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+]);
 
 /** The content hash a book is stored under, which its R2 keys are derived from. */
 async function storedFileHash(pdfId: string): Promise<string> {
@@ -311,6 +314,44 @@ describe("PDF thumbnails", () => {
     expect(new Uint8Array(await getResponse.arrayBuffer())).toEqual(FAKE_WEBP);
   });
 
+  it("refuses a cover that is not a WebP image", async () => {
+    const book = await uploadBook({ tag: "thumb-not-webp", fileName: "not-webp.pdf" });
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+
+    const putResponse = await SELF.fetch(`https://example.com/api/pdf/${book.id}/thumbnail`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/webp" },
+      body: png,
+    });
+
+    expect(putResponse.status).toBe(400);
+    expect(await putResponse.json()).toStrictEqual({
+      error: { code: "VALIDATION_ERROR", message: "Thumbnail is not a WebP image" },
+    });
+    // Nothing was stored, so the shelf still falls back to the placeholder
+    const getResponse = await SELF.fetch(`https://example.com/api/pdf/${book.id}/thumbnail`);
+    expect(getResponse.status).toBe(404);
+  });
+
+  it("refuses a cover far larger than a rendered page", async () => {
+    const book = await uploadBook({ tag: "thumb-too-big", fileName: "too-big.pdf" });
+    const oversized = new Uint8Array(2 * 1024 * 1024 + 1);
+    oversized.set(FAKE_WEBP, 0);
+
+    const putResponse = await SELF.fetch(`https://example.com/api/pdf/${book.id}/thumbnail`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/webp" },
+      body: oversized,
+    });
+
+    expect(putResponse.status).toBe(400);
+    expect(await putResponse.json()).toStrictEqual({
+      error: { code: "VALIDATION_ERROR", message: "Thumbnail is larger than 2097152 bytes" },
+    });
+    const getResponse = await SELF.fetch(`https://example.com/api/pdf/${book.id}/thumbnail`);
+    expect(getResponse.status).toBe(404);
+  });
+
   it("returns 404 when putting a thumbnail for an unknown book", async () => {
     const response = await SELF.fetch("https://example.com/api/pdf/does-not-exist/thumbnail", {
       method: "PUT",
@@ -442,7 +483,20 @@ describe("GET /api/pdf/:pdfId/locate", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toStrictEqual({
-      error: { code: "VALIDATION_ERROR", message: "Missing text" },
+      error: { code: "VALIDATION_ERROR", message: "Invalid query parameter: text" },
+    });
+  });
+
+  it("refuses a passage longer than any quotable one instead of scanning the book for it", async () => {
+    const book = await uploadBook({ tag: "locate-long", fileName: "locate-long.pdf" });
+
+    const response = await SELF.fetch(
+      `https://example.com/api/pdf/${book.id}/locate?text=${"あ".repeat(2001)}`,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toStrictEqual({
+      error: { code: "VALIDATION_ERROR", message: "Invalid query parameter: text" },
     });
   });
 

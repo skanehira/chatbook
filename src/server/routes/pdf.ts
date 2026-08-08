@@ -19,6 +19,7 @@ import {
   streamResponseWithWebSearch,
 } from "../services/deepseekService";
 import { buildMessages, findPageNumber, parseCitations } from "../services/chatService";
+import { locateQuerySchema } from "../../shared/schemas/book";
 import { createSelectionRequestSchema } from "../../shared/schemas/selection";
 import { sendChatRequestSchema } from "../../shared/schemas/chat";
 import type { ErrorCode, ErrorPayload } from "../../shared/schemas/error";
@@ -31,6 +32,17 @@ type Env = {
     DEEPSEEK_API_KEY: string;
   };
 };
+
+/** A cover is one page rendered 400px wide; nothing that big is one. */
+const MAX_THUMBNAIL_BYTES = 2 * 1024 * 1024;
+
+/** A WebP file is a RIFF container whose form type, at offset 8, is "WEBP". */
+function isWebp(body: ArrayBuffer): boolean {
+  if (body.byteLength < 12) return false;
+  const header = new Uint8Array(body, 0, 12);
+  const tag = (offset: number) => String.fromCharCode(...header.subarray(offset, offset + 4));
+  return tag(0) === "RIFF" && tag(8) === "WEBP";
+}
 
 /**
  * Build the PDF routes. Ids and timestamps come from the injected clock; the
@@ -138,9 +150,45 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
         }
 
+        if (c.req.header("Content-Type") !== THUMBNAIL_CONTENT_TYPE) {
+          return c.json(
+            {
+              error: {
+                code: "VALIDATION_ERROR" satisfies ErrorCode,
+                message: `Thumbnail must be sent as ${THUMBNAIL_CONTENT_TYPE}`,
+              },
+            },
+            400,
+          );
+        }
+
         const body = await c.req.arrayBuffer();
         if (body.byteLength === 0) {
           return c.json({ error: { code: "VALIDATION_ERROR", message: "Empty thumbnail" } }, 400);
+        }
+        if (body.byteLength > MAX_THUMBNAIL_BYTES) {
+          return c.json(
+            {
+              error: {
+                code: "VALIDATION_ERROR" satisfies ErrorCode,
+                message: `Thumbnail is larger than ${MAX_THUMBNAIL_BYTES} bytes`,
+              },
+            },
+            400,
+          );
+        }
+        // The bucket serves this back as image/webp, so what goes in has to be
+        // one: the endpoint is otherwise a way to store arbitrary bytes.
+        if (!isWebp(body)) {
+          return c.json(
+            {
+              error: {
+                code: "VALIDATION_ERROR" satisfies ErrorCode,
+                message: "Thumbnail is not a WebP image",
+              },
+            },
+            400,
+          );
         }
 
         await c.env.PDF_BUCKET.put(thumbnailObjectKey(pdf.fileHash), body, {
@@ -175,8 +223,8 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
       // Resolves a passage from a `#:~:text=` link to the page that holds it. The
       // browser cannot do this itself here: the page is only in the DOM once the
       // reader has jumped to it.
-      .get("/pdf/:pdfId/locate", async (c) => {
-        const text = c.req.query("text");
+      .get("/pdf/:pdfId/locate", validate("query", locateQuerySchema), async (c) => {
+        const { text } = c.req.valid("query");
         const pdf = await drizzle(c.env.DB)
           .select({ fullText: pdfs.fullText, pageCount: pdfs.pageCount })
           .from(pdfs)
@@ -184,9 +232,6 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           .get();
         if (!pdf) {
           return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
-        }
-        if (!text) {
-          return c.json({ error: { code: "VALIDATION_ERROR", message: "Missing text" } }, 400);
         }
 
         return c.json({ pageNumber: findPageNumber(text, pdf.fullText, pdf.pageCount) ?? null });

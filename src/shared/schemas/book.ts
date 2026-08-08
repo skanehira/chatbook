@@ -35,6 +35,17 @@ export const bookDetailSchema = z.object({
 
 export type BookDetail = z.infer<typeof bookDetailSchema>;
 
+/**
+ * Longest passage `/locate` will look for. A quoted passage is a sentence or
+ * two; beyond this the request is not a lookup, and each one scans the whole
+ * book character by character.
+ */
+export const MAX_LOCATE_TEXT_LENGTH = 2000;
+
+export const locateQuerySchema = z.object({
+  text: z.string().min(1).max(MAX_LOCATE_TEXT_LENGTH),
+});
+
 /** Where a passage quoted from a `#:~:text=` link lives, or null if nowhere. */
 export const locatedPageSchema = z.object({
   pageNumber: z.number().int().positive().nullable(),
