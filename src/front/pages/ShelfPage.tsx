@@ -1,12 +1,14 @@
-// oxlint-disable-next-line no-restricted-imports -- マウント時に一度だけ本棚を取得する。再検証もキャッシュ共有も要らないため SWR は使わない
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useNavigate } from "react-router";
+import useSWR from "swr";
 import { FileSelector } from "../components/PdfViewer/FileSelector";
 import { fetcher } from "../lib/fetcher";
 import { bookDeletedSchema, bookListSchema, type BookSummary } from "../../shared/schemas/book";
 
-/** Module-level so the effect below keeps a stable dependency. */
-const fetchBooks = () => fetcher("/api/pdfs", bookListSchema).then((data) => data.books);
+/** Cache key of the shelf, and the endpoint it is read from. */
+const SHELF_KEY = "/api/pdfs";
+
+const fetchBooks = () => fetcher(SHELF_KEY, bookListSchema).then((data) => data.books);
 
 const requestBookDeletion = (id: string) =>
   fetcher(`/api/pdf/${id}`, bookDeletedSchema, { method: "DELETE" });
@@ -131,37 +133,26 @@ export function ShelfPage({
   deleteBook = requestBookDeletion,
 }: ShelfPageProps = {}) {
   const navigate = useNavigate();
-  const [books, setBooks] = useState<BookSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: books, error: loadError, mutate } = useSWR(SHELF_KEY, loadBooks);
+  const [deletionError, setDeletionError] = useState<string | null>(null);
   const [bookPendingDeletion, setBookPendingDeletion] = useState<BookSummary | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    loadBooks()
-      .then((loaded) => {
-        if (!cancelled) setBooks(loaded);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) {
-          setError(`本棚の読み込みに失敗しました: ${err.message}`);
-          setBooks([]);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadBooks]);
+  const error =
+    deletionError ??
+    (loadError ? `本棚の読み込みに失敗しました: ${(loadError as Error).message}` : null);
 
   const openBook = useCallback((id: string) => navigate(`/books/${id}`), [navigate]);
 
   const removeBook = async (book: BookSummary) => {
-    setError(null);
+    setDeletionError(null);
     setBookPendingDeletion(null);
     try {
       await deleteBook(book.id);
-      setBooks((current) => current?.filter((b) => b.id !== book.id) ?? current);
+      // The server has already dropped it, so re-reading the shelf would only
+      // confirm what this list can work out for itself.
+      await mutate((current) => current?.filter((b) => b.id !== book.id), { revalidate: false });
     } catch (err) {
-      setError(`削除に失敗しました: ${(err as Error).message}`);
+      setDeletionError(`削除に失敗しました: ${(err as Error).message}`);
     }
   };
 
@@ -175,7 +166,7 @@ export function ShelfPage({
       <main className="mx-auto max-w-6xl p-6">
         {error && <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</p>}
 
-        {books === null && <p className="text-sm text-gray-500">読み込み中...</p>}
+        {!books && !error && <p className="text-sm text-gray-500">読み込み中...</p>}
 
         {books?.length === 0 && !error && (
           <div className="py-24 text-center">

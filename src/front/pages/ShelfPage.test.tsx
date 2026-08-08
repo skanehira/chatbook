@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { ShelfPage } from "./ShelfPage";
 import type { BookSummary } from "../../shared/schemas/book";
+import { SwrTestCache } from "../../test/swrTestCache";
 
 function book(overrides: Partial<BookSummary> = {}): BookSummary {
   return {
@@ -21,12 +22,14 @@ function renderShelf(props: {
   deleteBook?: (id: string) => Promise<unknown>;
 }) {
   render(
-    <MemoryRouter>
-      <Routes>
-        <Route path="/" element={<ShelfPage {...props} />} />
-        <Route path="/books/:pdfId" element={<ReaderStub />} />
-      </Routes>
-    </MemoryRouter>,
+    <SwrTestCache>
+      <MemoryRouter>
+        <Routes>
+          <Route path="/" element={<ShelfPage {...props} />} />
+          <Route path="/books/:pdfId" element={<ReaderStub />} />
+        </Routes>
+      </MemoryRouter>
+    </SwrTestCache>,
   );
 }
 
