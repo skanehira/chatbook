@@ -50,6 +50,10 @@ export async function storeCoverIfMissing(
   }
 }
 
+/** Hands the fetched bytes to pdf.js. Injected so tests can stand in for it. */
+const buildPdfDocument = (data: ArrayBuffer) =>
+  pdfjsLib.getDocument({ data, ...PDFJS_ASSET_OPTIONS }).promise;
+
 /**
  * Load the pdfjs-dist PDFDocumentProxy for the given book by fetching the
  * stored PDF binary from the API.
@@ -59,7 +63,11 @@ export async function storeCoverIfMissing(
  * a book that opened to a blank page. `error` is why, in the words of whoever
  * refused; the viewer is what turns it into a sentence.
  */
-export function usePdfDocument(book: BookDetail | undefined, fetchFn: typeof fetch = fetch) {
+export function usePdfDocument(
+  book: BookDetail | undefined,
+  fetchFn: typeof fetch = fetch,
+  buildDocument: (data: ArrayBuffer) => Promise<pdfjsTypes.PDFDocumentProxy> = buildPdfDocument,
+) {
   const [pdfDocument, setPdfDocument] = useState<pdfjsTypes.PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const loadingRef = useRef<string | null>(null);
@@ -107,10 +115,7 @@ export function usePdfDocument(book: BookDetail | undefined, fetchFn: typeof fet
         const arrayBuffer = await response.arrayBuffer();
         if (cancelled) return;
 
-        const doc = await pdfjsLib.getDocument({
-          data: arrayBuffer,
-          ...PDFJS_ASSET_OPTIONS,
-        }).promise;
+        const doc = await buildDocument(arrayBuffer);
         if (cancelled) return;
 
         setPdfDocument(doc);

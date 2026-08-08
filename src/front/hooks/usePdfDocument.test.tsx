@@ -79,14 +79,51 @@ const BOOK: BookDetail = {
  * wrapped like every other SWR user: the default cache is a module-level
  * singleton and would carry that entry between tests.
  */
-function loadWith(fetchFn: typeof fetch) {
+function loadWith(
+  fetchFn: typeof fetch,
+  buildDocument?: (data: ArrayBuffer) => Promise<pdfjsTypes.PDFDocumentProxy>,
+) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <SwrTestCache>{children}</SwrTestCache>
   );
-  return renderHook(() => usePdfDocument(BOOK, fetchFn), { wrapper });
+  return renderHook(
+    ({ book }: { book: BookDetail | undefined }) => usePdfDocument(book, fetchFn, buildDocument),
+    {
+      wrapper,
+      initialProps: { book: BOOK as BookDetail | undefined },
+    },
+  );
+}
+
+/** A stored PDF whose bytes pdf.js is standing in for. */
+const servesBytes: typeof fetch = () => Promise.resolve(new Response(new ArrayBuffer(8)));
+
+/** Records the documents pdf.js handed over and which of them were closed. */
+function documentBuilder() {
+  const closed: string[] = [];
+  let built = 0;
+  const build = () => {
+    const name = `doc-${++built}`;
+    return Promise.resolve({
+      destroy: () => {
+        closed.push(name);
+        return Promise.resolve();
+      },
+    } as unknown as pdfjsTypes.PDFDocumentProxy);
+  };
+  return { closed, build };
 }
 
 describe("usePdfDocument", () => {
+  it("hands the viewer the document pdf.js built from the stored bytes", async () => {
+    const { build } = documentBuilder();
+
+    const { result } = loadWith(servesBytes, build);
+
+    await waitFor(() => expect(result.current.pdfDocument).not.toBeNull());
+    expect(result.current.error).toBeNull();
+  });
+
   it("reports the server's reason when the book's file cannot be fetched", async () => {
     // The viewer used to be left with no document and no reason for it, which
     // reads on screen as a book that opened to a blank page.
