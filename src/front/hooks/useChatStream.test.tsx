@@ -151,7 +151,7 @@ describe("useChatStream", () => {
     expect(store.get(chatMessagesAtom).at(-1)?.citations).toStrictEqual(expected);
   });
 
-  it("reports the code the server sent with a failed answer, not just its message", async () => {
+  it("reports the code as well as the message when the stream carries an error event", async () => {
     const { fetchFn, calls } = streamingFetchStub();
     const { view } = renderChatStream(fetchFn);
     const errors: Error[] = [];

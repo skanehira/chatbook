@@ -41,7 +41,7 @@ async function readWebSearchStream(lines: string[]) {
 }
 
 describe("streamResponseWithWebSearch", () => {
-  it("delivers the text deltas of the stream and the token counts it ends with", async () => {
+  it("delivers the text deltas and the token counts when the stream completes normally", async () => {
     const { tokens, errors, usage } = await readWebSearchStream([
       sseData({ type: "response.output_text.delta", delta: "Workers " }),
       sseData({ type: "response.output_text.delta", delta: "run everywhere" }),
@@ -56,7 +56,7 @@ describe("streamResponseWithWebSearch", () => {
   it("skips a delta that is not text instead of writing it into the answer", async () => {
     // A non-string delta used to be concatenated as "[object Object]" and saved
     // to D1 as part of the answer.
-    const { tokens, usage } = await readWebSearchStream([
+    const { tokens, errors, usage } = await readWebSearchStream([
       sseData({ type: "response.output_text.delta", delta: { annotation: "web" } }),
       sseData({ type: "response.output_text.delta", delta: "Workers run everywhere" }),
       sseData({ type: "response.output_text.delta", delta: 42 }),
@@ -65,11 +65,25 @@ describe("streamResponseWithWebSearch", () => {
 
     expect(tokens).toStrictEqual(["Workers run everywhere"]);
     expect(usage).toStrictEqual({ inputTokens: 11, outputTokens: 2 });
+    // Silently skipped, not reported: a delta the reader has no use for is not
+    // a failure to show in the chat
+    expect(errors).toStrictEqual([]);
   });
 
-  it("keeps reading the answer past an event whose shape it does not know", async () => {
-    const { tokens, usage } = await readWebSearchStream([
+  it("keeps reading the answer past an event of a type it does not know", async () => {
+    const { tokens, errors, usage } = await readWebSearchStream([
       sseData({ type: "response.web_search_call.in_progress" }),
+      sseData({ type: "response.output_text.delta", delta: "Workers run everywhere" }),
+      sseData({ type: "response.completed", usage: { input_tokens: 11, output_tokens: 2 } }),
+    ]);
+
+    expect(tokens).toStrictEqual(["Workers run everywhere"]);
+    expect(usage).toStrictEqual({ inputTokens: 11, outputTokens: 2 });
+    expect(errors).toStrictEqual([]);
+  });
+
+  it("keeps reading the answer past a line that is not JSON at all", async () => {
+    const { tokens, errors, usage } = await readWebSearchStream([
       sseData({ type: "response.output_text.delta", delta: "Workers run everywhere" }),
       "data: {not json",
       sseData({ type: "response.completed", usage: { input_tokens: 11, output_tokens: 2 } }),
@@ -77,5 +91,6 @@ describe("streamResponseWithWebSearch", () => {
 
     expect(tokens).toStrictEqual(["Workers run everywhere"]);
     expect(usage).toStrictEqual({ inputTokens: 11, outputTokens: 2 });
+    expect(errors).toStrictEqual([]);
   });
 });

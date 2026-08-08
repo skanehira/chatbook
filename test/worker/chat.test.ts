@@ -359,8 +359,8 @@ describe("POST /api/pdf/:pdfId/selections/:selId/chats", () => {
     expect(response.status).toBe(200);
     const events = parseSse(await response.text());
 
-    expect(calledUrls).toEqual(["https://api.deepseek.com/chat/completions"]);
-    expect(events.map((e) => e.event)).toEqual(["token", "done"]);
-    expect(events[0].data).toEqual({ content: "Everywhere" });
+    expect(calledUrls).toStrictEqual(["https://api.deepseek.com/chat/completions"]);
+    expect(events.map((e) => e.event)).toStrictEqual(["token", "done"]);
+    expect(events[0].data).toStrictEqual({ content: "Everywhere" });
   });
 });

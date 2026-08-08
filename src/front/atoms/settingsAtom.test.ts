@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vite-plus/test";
+import { describe, it, expect, vi, afterEach } from "vite-plus/test";
 import { createStore } from "jotai";
 
 const STORAGE_KEY = "chatbook:keybindings";
@@ -8,26 +8,41 @@ const STORAGE_KEY = "chatbook:keybindings";
  * storage. The atom reads storage when it is created, so each case needs the
  * module loaded again.
  */
-async function restoredMode(stored: string | null) {
+async function restoredMode(stored: string) {
   localStorage.clear();
-  if (stored !== null) localStorage.setItem(STORAGE_KEY, stored);
+  localStorage.setItem(STORAGE_KEY, stored);
   vi.resetModules();
   const { keybindingModeAtom } = await import("./settingsAtom");
   return createStore().get(keybindingModeAtom);
 }
 
+afterEach(() => {
+  localStorage.clear();
+});
+
 describe("keybindingModeAtom", () => {
-  it("restores the mode a previous session stored", async () => {
-    expect(await restoredMode(JSON.stringify("emacs"))).toBe("emacs");
-  });
+  // Anything that is not a mode has to come back as the default: resolveAction
+  // has no default branch, so an unknown mode makes it return undefined and
+  // useKeyboardShortcuts throws on the first key pressed.
+  it.each([
+    {
+      holds: "a mode a previous session stored",
+      stored: JSON.stringify("emacs"),
+      starts: "emacs",
+    },
+    {
+      holds: "a mode the reader has no bindings for",
+      stored: JSON.stringify("dvorak"),
+      starts: "vim",
+    },
+    {
+      holds: "something that is not a mode at all",
+      stored: JSON.stringify({ mode: "vim" }),
+      starts: "vim",
+    },
+  ])("starts in $starts when storage holds $holds", async ({ stored, starts }) => {
+    const mode = await restoredMode(stored);
 
-  it("falls back to vim when storage holds a mode the reader has no bindings for", async () => {
-    // resolveAction has no default branch, so an unknown mode makes it return
-    // undefined and useKeyboardShortcuts throws on the first key pressed.
-    expect(await restoredMode(JSON.stringify("dvorak"))).toBe("vim");
-  });
-
-  it("falls back to vim when storage holds something that is not a mode at all", async () => {
-    expect(await restoredMode(JSON.stringify({ mode: "vim" }))).toBe("vim");
+    expect(mode).toBe(starts);
   });
 });
