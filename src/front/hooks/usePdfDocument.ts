@@ -56,7 +56,8 @@ export async function storeCoverIfMissing(
  *
  * A book whose binary is gone, or whose bytes pdf.js will not open, used to
  * leave the viewer with no document and nothing said about it — the reader saw
- * a book that opened to a blank page. `error` is that reason, worded for them.
+ * a book that opened to a blank page. `error` is why, in the words of whoever
+ * refused; the viewer is what turns it into a sentence.
  */
 export function usePdfDocument(book: BookDetail | undefined, fetchFn: typeof fetch = fetch) {
   const [pdfDocument, setPdfDocument] = useState<pdfjsTypes.PDFDocumentProxy | null>(null);
@@ -100,7 +101,7 @@ export function usePdfDocument(book: BookDetail | undefined, fetchFn: typeof fet
         const response = await fetchFn(url);
         if (!response.ok) {
           const refusal = await readRefusal(url, response);
-          if (!cancelled) setError(`PDFを表示できません: ${refusal.message}`);
+          if (!cancelled) setError(refusal.message);
           return;
         }
         const arrayBuffer = await response.arrayBuffer();
@@ -118,11 +119,7 @@ export function usePdfDocument(book: BookDetail | undefined, fetchFn: typeof fet
         // Everything from here on is pdf.js refusing the bytes or the request
         // never arriving; both leave the reader with nothing to look at.
         console.error("Failed to load PDF for rendering:", cause);
-        if (!cancelled) {
-          setError(
-            `PDFを表示できません: ${cause instanceof Error ? cause.message : String(cause)}`,
-          );
-        }
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
       }
     }
 

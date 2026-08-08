@@ -102,9 +102,7 @@ describe("usePdfDocument", () => {
 
     const { result } = loadWith(missing);
 
-    await waitFor(() =>
-      expect(result.current.error).toBe("PDFを表示できません: PDF binary not found in storage"),
-    );
+    await waitFor(() => expect(result.current.error).toBe("PDF binary not found in storage"));
     expect(result.current.pdfDocument).toBeNull();
   });
 
@@ -118,7 +116,7 @@ describe("usePdfDocument", () => {
 
     await waitFor(() =>
       expect(result.current.error).toBe(
-        `PDFを表示できません: request to /api/pdf/${PDF_ID}/file failed with status 502`,
+        `request to /api/pdf/${PDF_ID}/file failed with status 502`,
       ),
     );
   });
@@ -128,6 +126,6 @@ describe("usePdfDocument", () => {
 
     const { result } = loadWith(offline);
 
-    await waitFor(() => expect(result.current.error).toBe("PDFを表示できません: Failed to fetch"));
+    await waitFor(() => expect(result.current.error).toBe("Failed to fetch"));
   });
 });

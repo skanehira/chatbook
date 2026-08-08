@@ -68,7 +68,9 @@ export function useAskAboutSelection(
           void sendMessage(pdfId, selection.id, question, useWebSearch);
         })
         .orTee((failure) => {
-          setSaveError(`ハイライトを保存できませんでした: ${failure.message}`);
+          // Why it failed, in the server's words. The viewer writes the
+          // sentence around it, as every other display of a failure does.
+          setSaveError(failure.message);
         });
     },
     [addHighlight, saveSelection, sendMessage, setActiveSelection, setChatMessages],

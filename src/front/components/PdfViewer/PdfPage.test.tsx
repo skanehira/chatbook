@@ -10,7 +10,7 @@ const DAMAGED_DOC = {
 } as unknown as PDFDocumentProxy;
 
 describe("PdfPage", () => {
-  it("hands up the reason a page could not be drawn instead of leaving it blank", async () => {
+  it("hands the failure up to its caller when the page cannot be drawn", async () => {
     // The failure used to reach console.error only, so the reader was left
     // looking at an empty page frame with the page counter still on it.
     const reported: string[] = [];

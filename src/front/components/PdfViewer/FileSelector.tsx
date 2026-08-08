@@ -21,6 +21,9 @@ interface FileSelectorProps {
   extract?: (file: File) => Promise<ExtractedPdfData>;
 }
 
+/** Whatever was thrown, as something with a `message` the reader can be shown. */
+const asError = (cause: unknown) => (cause instanceof Error ? cause : new Error(String(cause)));
+
 export function FileSelector({
   onOpened,
   onError,
@@ -37,30 +40,28 @@ export function FileSelector({
 
     // Reading the file is pdf.js' job and can fail on its own (a file that is
     // not really a PDF), so it is part of the same result as the upload.
-    const stored = ResultAsync.fromPromise(extract(file), (cause) =>
-      cause instanceof Error ? cause : new Error(String(cause)),
-    ).andThen((extracted) => {
-      // Send as multipart/form-data (avoids base64 overhead)
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("fullText", extracted.fullText);
-      formData.append("pageCount", String(extracted.pageCount));
-      if (extracted.thumbnail) {
-        formData.append("thumbnail", extracted.thumbnail, "cover.webp");
-      }
+    // Everything from reading the file to filling the cache is one outcome, so
+    // that a rejection anywhere in it reaches the reader. An event handler is
+    // the end of the line: a promise that rejects here is caught by nothing —
+    // not even the route's errorElement — and the reader would be left with a
+    // file picker that appeared to do nothing.
+    const opened = ResultAsync.fromPromise(extract(file), asError)
+      .andThen((extracted) => {
+        // Send as multipart/form-data (avoids base64 overhead)
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("fullText", extracted.fullText);
+        formData.append("pageCount", String(extracted.pageCount));
+        if (extracted.thumbnail) {
+          formData.append("thumbnail", extracted.thumbnail, "cover.webp");
+        }
 
-      return resultFetcher("/api/pdf/open", pdfMetadataSchema, {
-        method: "POST",
-        body: formData,
-      }).map((result) => ({ result, hasThumbnail: extracted.thumbnail !== null }));
-    });
-
-    const outcome = await stored;
-    // Allow selecting the same file again
-    e.target.value = "";
-
-    await outcome.match(
-      async ({ result, hasThumbnail }) => {
+        return resultFetcher("/api/pdf/open", pdfMetadataSchema, {
+          method: "POST",
+          body: formData,
+        }).map((result) => ({ result, hasThumbnail: extracted.thumbnail !== null }));
+      })
+      .andThen(({ result, hasThumbnail }) => {
         // The upload already answered with everything the reader needs to open
         // the book, so hand it to the cache the reader reads from. Without this
         // the reader would show an empty viewer while it asked for the very
@@ -70,20 +71,26 @@ export function FileSelector({
         // one. Opening a book that was annotated before therefore shows its
         // highlights a moment late, when the reader's own read of the book
         // lands on top of this entry.
-        const opened: BookDetail = {
+        const book: BookDetail = {
           id: result.id,
           fileName: result.fileName,
           pageCount: result.pageCount,
           hasThumbnail,
           selections: [],
         };
-        await mutate(bookKey(result.id), opened, { revalidate: false });
+        return ResultAsync.fromPromise(
+          mutate(bookKey(result.id), book, { revalidate: false }),
+          asError,
+        ).map(() => result.id);
+      });
 
-        onOpened?.(result.id);
-      },
-      async (failure) => {
-        onError?.(`PDFを開けませんでした: ${failure.message}`);
-      },
+    const outcome = await opened;
+    // Allow selecting the same file again
+    e.target.value = "";
+
+    outcome.match(
+      (pdfId) => onOpened?.(pdfId),
+      (failure) => onError?.(`PDFを開けませんでした: ${failure.message}`),
     );
   };
 

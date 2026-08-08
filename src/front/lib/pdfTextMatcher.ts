@@ -5,16 +5,19 @@ export interface SelectionPosition {
   rects: { x: number; y: number; width: number; height: number }[];
 }
 
-/**
- * Get the text item indices from the current Selection.
- * Returns null if the selection is empty or not within our text layer.
- */
-export function getSelectionFromTextLayer(): {
+/** The passage the reader dragged over, located in the page's text items. */
+export interface SelectionFromTextLayer {
   text: string;
   startIndex: number;
   endIndex: number;
   pageNumber: number;
-} | null {
+}
+
+/**
+ * Get the text item indices from the current Selection.
+ * Returns null if the selection is empty or not within our text layer.
+ */
+export function getSelectionFromTextLayer(): SelectionFromTextLayer | null {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
 

@@ -93,7 +93,7 @@ describe("useAskAboutSelection", () => {
       404,
       "http",
     ]);
-    expect(view.result.current.saveError).toBe("ハイライトを保存できませんでした: PDF not found");
+    expect(view.result.current.saveError).toBe("PDF not found");
     expect(added).toStrictEqual([]);
     expect(calls).toStrictEqual([]);
     expect(store.get(activeSelectionAtom)).toBeNull();
