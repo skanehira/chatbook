@@ -54,6 +54,12 @@ echo 'DEEPSEEK_API_KEY=dummy' > .dev.vars
 `// oxlint-disable-next-line no-restricted-imports -- <理由>` を付けて理由を明記する運用にしている。
 新しく足すときも同じように理由を書くこと（既存10ファイルが手本）。
 
+**データ取得は理由にならない**。`useEffect` + `fetch` は SWR へ移してある（下記
+「状態管理とルーティング」）。残っている 10 ファイルはすべて外部システムとの同期
+——pdf.js の描画・`destroy` を伴うドキュメント構築、`document` / `window` / `ResizeObserver`
+の購読、URL や jotai ストアという React の外にある状態への書き戻し——であり、
+新しく足す `useEffect` もそのいずれかに当てはまるはず。
+
 ## アーキテクチャ
 
 ### PDF の処理はブラウザ側で行う（重要）
@@ -181,12 +187,34 @@ PDF 引用は `fullText` 内の位置からページ番号を割り出してジ�
 
 ### 状態管理とルーティング
 
-Jotai の atom（`src/front/atoms/`）。`swr` / `neverthrow` はテンプレート由来の
-未使用依存で、現在どこからも import していない。
+**サーバから来たものは SWR、クライアントだけの状態は Jotai の atom**（`src/front/atoms/`）。
+`neverthrow` はテンプレート由来の未使用依存で、現在どこからも import していない。
 
-- `/` … 本棚（`ShelfPage`）
-- `/books/:pdfId` … リーダー（`AppPage`）。URL から `pdfDocAtom` を復元するので
+- `/` … 本棚（`ShelfPage`）。一覧は `useSWR("/api/pdfs")`
+- `/books/:pdfId` … リーダー（`AppPage`）。本は `useBook(pdfId)` で読むので
   リロード・直リンクでも開ける
+
+SWR の使い方で押さえるところ:
+
+- **ルートの `SWRConfig`**（`src/front/main.tsx`）で `revalidateOnFocus` を切っている。
+  ローカル単一ユーザーのアプリでデータは自分の操作でしか変わらず、focus 復帰の再検証は
+  Playwright のフォーカス往復で E2E を非決定にするだけ
+- **本のキーは `src/front/hooks/useBook.ts` の `bookKey(pdfId)`（= `/api/pdf/:pdfId`）1 本**。
+  リーダー（`AppPage`）・ビューア・チャットパネルが同じキーを共有するので本の読み取りは
+  1 回で済み、ハイライトの追加も全員に同時に映る。ハイライト一覧は
+  `useHighlights` がこのエントリの `selections` から導出する（色のパレット補完込み）ので、
+  **専用の atom を作らないこと**——SWR のキャッシュ自体が共有のグローバル state で、
+  atom と二重管理すると必ずずれる
+- **アップロード時のキャッシュ先充填**: `FileSelector` が `POST /api/pdf/open` の結果を
+  `mutate(bookKey(id), ..., { revalidate: false })` で先に書く。遷移先の
+  `AppPage` がキャッシュヒットで即座に開くため。**atom への反映を `onSuccess` に
+  依存させないこと**——キャッシュヒット時は発火しない
+- **リーダーの state は本ごとに作り直す**: `AppPage` が `pdfId` を key にした jotai
+  `Provider` を張る。開いているチャット・選択・ページはどれも 1 冊に属するので、
+  個別に reset する代わりに store ごと捨てる。本自体は store の外（SWR）にあるので残る
+- **テストは `src/test/swrTestCache.tsx` の `SwrTestCache` で包む**。SWR の既定キャッシュは
+  モジュールレベルの singleton なので、包まないとテストが互いのキャッシュを見て
+  実行順に依存する。`seed` を渡すとそのキーをサーバの代わりに使う
 
 キーバインド（Vim / Emacs）は `src/front/lib/keybindings.ts` の `resolveAction` に
 DOM 非依存の純粋関数として実装。`gg` や `C-c t` の2ストロークは `pending` プレフィックスで表現し、
