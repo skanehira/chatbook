@@ -52,16 +52,31 @@ echo 'DEEPSEEK_API_KEY=dummy' > .dev.vars
 このアプリは canvas 描画・DOM 購読・pdf.js の命令的 API が本質なので使う場面が多いが、
 ルールは**残したまま**、使う側が import 行に
 `// oxlint-disable-next-line no-restricted-imports -- <理由>` を付けて理由を明記する運用にしている。
-新しく足すときも同じように理由を書くこと（既存9ファイルが手本）。
+新しく足すときも同じように理由を書くこと。
 
-**データ取得は理由にならない**。`useEffect` + `fetch` は SWR へ移してある（下記
-「状態管理とルーティング」）。残っている 9 ファイルはすべて外部システムとの同期
-——pdf.js の描画・`destroy` を伴うドキュメント構築、`document` / `window` / `ResizeObserver`
-の購読、URL への書き戻し——であり、新しく足す `useEffect` もそのいずれかに当てはまるはず。
+現在 9 ファイルに理由コメントがあり、内訳は次の 4 つしかない。新しく足す `useEffect` も
+このどれかに当てはまるはずで、当てはまらないなら書き方を疑うこと:
+
+| 用途                                            | ファイル                                                                                                                                            |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| pdf.js という命令的ライブラリの呼び出しと後始末 | `PdfPage.tsx`（`RenderTask` / `TextLayer`）、`usePdfDocument.ts`（バイナリ取得とドキュメント構築）、`usePdfOutline.ts`（`getOutline` と dest 解決） |
+| `document` / `window` / `ResizeObserver` の購読 | `useKeyboardShortcuts.ts`、`SettingsMenu.tsx`、`SelectionPopover.tsx`、`PdfViewer.tsx`                                                              |
+| DOM への命令的な書き込み（スクロール位置）      | `ChatMessageList.tsx`（最下部へ追随）、`PdfViewer.tsx`（ページ遷移時のリセット）                                                                    |
+| URL という React の外の状態への同期             | `useReadingLocation.ts`                                                                                                                             |
+
+**データ取得は理由にならない**。一覧・本・ハイライト・引用箇所のページ解決は SWR へ
+移してある（下記「状態管理とルーティング」）。
 
 **SWR が持っているものを atom へ写すのも理由にならない**。写した瞬間に同じデータが
 2 箇所に載り、更新のたびに 1 レンダー遅れる。読み手が少ないなら props で配る
 （`AppPage` → `PdfViewer` / `ChatArea` の `book` がその形）。
+
+これと紛らわしいものが 1 つだけある。`useReadingLocation.ts` は
+`useSWRImmutable` が解いた「引用箇所のページ番号」を `currentPageAtom` に書く。これは
+写しではない: `currentPageAtom` は「読者が今どのページにいるか」というクライアント状態で、
+キーボード・ページ送りボタン・目次・URL も書き込む。取得結果はその状態を**一度だけ動かす
+きっかけ**であって、サーバのデータを atom に常駐させているわけではない。
+**サーバの値がそのまま atom に載り続けるなら写し（禁止）、一度きりの入力なら可**。
 
 ## アーキテクチャ
 
@@ -190,17 +205,29 @@ PDF 引用は `fullText` 内の位置からページ番号を割り出してジ�
 
 ### 状態管理とルーティング
 
-**サーバから来たものは SWR、クライアントだけの状態は Jotai の atom**（`src/front/atoms/`）。
-両方に同じものを載せないこと。`neverthrow` はテンプレート由来の未使用依存で、現在
-どこからも import していない。
+**画面に出しっぱなしにするサーバのデータは SWR、クライアントだけの状態は Jotai の atom**
+（`src/front/atoms/`）。両方に同じものを載せないこと。`neverthrow` はテンプレート由来の
+未使用依存で、現在どこからも import していない。
 
 - `/` … 本棚（`ShelfPage`）。一覧は `useSWR("/api/pdfs")`
 - `/books/:pdfId` … リーダー（`AppPage`）。本は `useBook(pdfId)` で読むので
   リロード・直リンクでも開ける。読んだ本は `PdfViewer` / `ChatArea` へ **props で**
   渡す（atom に写さない。読み手はこの 2 つだけなので prop drilling にならない）
 
+**チャットだけは SWR に載っていない**。`chatMessagesAtom` が持ち、履歴の読み込みは
+`AppPage` の `handleSelectionClick` が生の `fetcher` を呼ぶ。理由は、同じ状態を SSE の
+ストリームがトークンごとに書き換えるため（`useChatStream`）——キャッシュに載せると
+再検証が流れてきた回答を上書きしうる。**「データ取得はすべて SWR」ではない**。
+イベントハンドラ起点の 1 回きりの取得（履歴・選択の作成・アップロード）は生の `fetcher`
+で書く。
+
 SWR の使い方で押さえるところ:
 
+- **fetcher は必ず `src/front/lib/fetcher.ts` の `fetcher` を通す**（上記
+  「外部入力のバリデーション（zod）」）。`useSWR(key, () => fetch(...).then(r => r.json()))`
+  のように生 `fetch` を渡すとスキーマ検証を素通りし、`ApiError` / `INVALID_RESPONSE`
+  の防護が消える。現在の SWR 呼び出しは全て `fetcher` 経由（PDF バイナリの取得だけは
+  JSON ではないので `usePdfDocument` が生の fetch を使うが、これは SWR ではない）
 - **ルートの `SWRConfig`**（`src/front/main.tsx`）で `revalidateOnFocus` を切っている。
   ローカル単一ユーザーのアプリでデータは自分の操作でしか変わらず、focus 復帰の再検証は
   Playwright のフォーカス往復で E2E を非決定にするだけ
@@ -210,19 +237,29 @@ SWR の使い方で押さえるところ:
   `useHighlights` がこのエントリの `selections` から導出する（色のパレット補完込み）ので、
   **専用の atom を作らないこと**——SWR のキャッシュ自体が共有のグローバル state で、
   atom と二重管理すると必ずずれる
+- **本は props、ハイライトは購読**という線引きは意図的。本の見出し（id / fileName /
+  pageCount）は開いている間変わらないので props で足りる。ハイライトは `PdfViewer` が
+  足して `ChatArea` が一覧する——兄弟どうしが同じ更新を見る必要があるので、
+  `BookReader` へ持ち上げず同じキーの購読で共有する
 - **アップロード時のキャッシュ先充填**: `FileSelector` が `POST /api/pdf/open` の結果を
   `mutate(bookKey(id), ..., { revalidate: false })` で先に書く。遷移先の
-  `AppPage` がキャッシュヒットで即座に開くため。**atom への反映を `onSuccess` に
-  依存させないこと**——キャッシュヒット時は発火しない
+  `AppPage` がキャッシュヒットで即座に開くため。先充填の `selections` は空・
+  `hasThumbnail` は推定値なので、**マウント時の再検証を止めないこと**——
+  既にハイライトのある本を開き直したとき、一覧が空のまま固定される
 - **リーダーの state は本ごとに作り直す**: `AppPage` が `pdfId` を key にした jotai
   `Provider` を張る。開いているチャット・選択・ページはどれも 1 冊に属するので、
   個別に reset する代わりに store ごと捨てる。本自体は store の外（SWR）にあるので残る。
   **本をまたいで残したい設定は store に置けない**——`atomWithStorage` +
   `{ getOnInit: true }` で localStorage に持たせる（`settingsAtom.ts` の
   `keybindingModeAtom` / `useWebSearchAtom` がその形）
-- **テストは `src/test/swrTestCache.tsx` の `SwrTestCache` で包む**。SWR の既定キャッシュは
-  モジュールレベルの singleton なので、包まないとテストが互いのキャッシュを見て
-  実行順に依存する。`seed` を渡すとそのキーをサーバの代わりに使う
+- **テストの差し替え口は 2 つある**。取得そのものを差し替えるなら DI 引数——
+  `useBook(pdfId, loadBook)` / `useHighlights(pdfId, loadBook)` /
+  `ShelfPage({ loadBooks, deleteBook })` / `FileSelector({ extract })` がその口。
+  キャッシュの中身を用意したいなら `src/test/swrTestCache.tsx` の `SwrTestCache` で包む
+  （SWR の既定キャッシュはモジュールレベルの singleton なので、包まないとテストが互いの
+  キャッシュを見て実行順に依存する。`seed` を渡すとそのキーをサーバの代わりに使う）。
+  例外は**書き込まれたキャッシュの中身を検証したいとき**で、`Map` への参照が要るため
+  `FileSelector.test.tsx` は自前の `Map` を `SWRConfig` へ直接渡している
 
 キーバインド（Vim / Emacs）は `src/front/lib/keybindings.ts` の `resolveAction` に
 DOM 非依存の純粋関数として実装。`gg` や `C-c t` の2ストロークは `pending` プレフィックスで表現し、
