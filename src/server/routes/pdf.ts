@@ -20,6 +20,8 @@ import {
 } from "../services/deepseekService";
 import { buildMessages, findPageNumber, parseCitations } from "../services/chatService";
 import { createSelectionRequestSchema } from "../../shared/schemas/selection";
+import { sendChatRequestSchema } from "../../shared/schemas/chat";
+import type { ErrorCode, ErrorPayload } from "../../shared/schemas/error";
 import { validate } from "./validation";
 
 type Env = {
@@ -256,180 +258,183 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           })),
         });
       })
-      .post("/pdf/:pdfId/selections/:selId/chats", async (c) => {
-        const selId = c.req.param("selId");
-        const d1Db = drizzle(c.env.DB);
-        const apiKey = c.env.DEEPSEEK_API_KEY;
+      .post(
+        "/pdf/:pdfId/selections/:selId/chats",
+        validate("json", sendChatRequestSchema),
+        async (c) => {
+          const selId = c.req.param("selId");
+          const d1Db = drizzle(c.env.DB);
+          const apiKey = c.env.DEEPSEEK_API_KEY;
 
-        if (!apiKey) {
-          return c.json(
-            { error: { code: "CONFIG_ERROR", message: "DEEPSEEK_API_KEY not set" } },
-            500,
-          );
-        }
+          if (!apiKey) {
+            return c.json(
+              { error: { code: "CONFIG_ERROR", message: "DEEPSEEK_API_KEY not set" } },
+              500,
+            );
+          }
 
-        const sel = await d1Db.select().from(selections).where(eq(selections.id, selId)).get();
-        if (!sel) {
-          return c.json(
-            { error: { code: "SELECTION_NOT_FOUND", message: "Selection not found" } },
-            404,
-          );
-        }
+          const sel = await d1Db.select().from(selections).where(eq(selections.id, selId)).get();
+          if (!sel) {
+            return c.json(
+              { error: { code: "SELECTION_NOT_FOUND", message: "Selection not found" } },
+              404,
+            );
+          }
 
-        const body = await c.req.json().catch(() => null);
-        if (!body) {
-          return c.json({ error: { code: "VALIDATION_ERROR", message: "Invalid JSON" } }, 400);
-        }
+          // useWebSearch takes a real boolean only: it used to be coerced with
+          // `!!`, so the string "false" turned web search on.
+          const { content, useWebSearch } = c.req.valid("json");
 
-        const { content, useWebSearch } = body as { content?: string; useWebSearch?: boolean };
-        if (!content || typeof content !== "string") {
-          return c.json({ error: { code: "VALIDATION_ERROR", message: "Missing content" } }, 400);
-        }
+          // Save user message
+          const userMsgId = idClock.newId();
+          const now = idClock.now();
+          await d1Db.insert(chatMessages).values({
+            id: userMsgId,
+            selectionId: selId,
+            role: "user",
+            content,
+            createdAt: now,
+          });
 
-        // Save user message
-        const userMsgId = idClock.newId();
-        const now = idClock.now();
-        await d1Db.insert(chatMessages).values({
-          id: userMsgId,
-          selectionId: selId,
-          role: "user",
-          content,
-          createdAt: now,
-        });
+          // Get PDF text for context
+          const pdfRow = await d1Db
+            .select({ fullText: pdfs.fullText, pageCount: pdfs.pageCount })
+            .from(pdfs)
+            .where(eq(pdfs.id, sel.pdfId))
+            .get();
 
-        // Get PDF text for context
-        const pdfRow = await d1Db
-          .select({ fullText: pdfs.fullText, pageCount: pdfs.pageCount })
-          .from(pdfs)
-          .where(eq(pdfs.id, sel.pdfId))
-          .get();
+          if (!pdfRow) {
+            return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
+          }
 
-        if (!pdfRow) {
-          return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
-        }
+          // Get chat history
+          const history = await d1Db
+            .select()
+            .from(chatMessages)
+            .where(eq(chatMessages.selectionId, selId))
+            .all();
 
-        // Get chat history
-        const history = await d1Db
-          .select()
-          .from(chatMessages)
-          .where(eq(chatMessages.selectionId, selId))
-          .all();
+          // Build system prompt
+          const fullText = pdfRow.fullText;
+          const systemPrompt = buildSystemPrompt(fullText, sel.selectedText, useWebSearch);
 
-        // Build system prompt
-        const fullText = pdfRow.fullText;
-        const systemPrompt = buildSystemPrompt(fullText, sel.selectedText, !!useWebSearch);
-        const doWebSearch = !!useWebSearch;
+          // Set up SSE streaming
+          const encoder = new TextEncoder();
+          let fullResponse = "";
+          // Leaving the chat cancels the response body. That only means "stop
+          // sending"; the answer is still read to the end and saved below, so
+          // reopening the highlight shows it.
+          let clientGone = false;
+          let finished!: Promise<void>;
 
-        // Set up SSE streaming
-        const encoder = new TextEncoder();
-        let fullResponse = "";
-        // Leaving the chat cancels the response body. That only means "stop
-        // sending"; the answer is still read to the end and saved below, so
-        // reopening the highlight shows it.
-        let clientGone = false;
-        let finished!: Promise<void>;
-
-        const stream = new ReadableStream({
-          start(controller) {
-            // Writing to a cancelled stream is allowed to throw, and a throw here
-            // would escape into the AI service's own catch and lose the answer
-            // before it is saved. Swallowing it is what keeps the save reachable.
-            const send = (payload: string) => {
-              if (clientGone) return;
-              try {
-                controller.enqueue(encoder.encode(payload));
-              } catch {
-                // A cancel can beat its own handler, so a refused write means the
-                // client is gone too
-                clientGone = true;
-              }
-            };
-            const closeStream = () => {
-              if (clientGone) return;
-              try {
-                controller.close();
-              } catch {
-                clientGone = true;
-              }
-            };
-
-            const callbacks = {
-              onToken(token: string) {
-                fullResponse += token;
-                send(`event: token\ndata: ${JSON.stringify({ content: token })}\n\n`);
-              },
-              async onDone(usage: { inputTokens: number; outputTokens: number }) {
-                // Parse citations with page number lookup for PDF citations
-                const citations = parseCitations(fullResponse, fullText, pdfRow.pageCount);
-
-                // Save the answer before telling the client about it, so a client
-                // that already left cannot stop the save
-                const assistantMsgId = idClock.newId();
-                await d1Db
-                  .insert(chatMessages)
-                  .values({
-                    id: assistantMsgId,
-                    selectionId: selId,
-                    role: "assistant",
-                    content: fullResponse,
-                    citations: JSON.stringify(citations),
-                    createdAt: idClock.now(),
-                  })
-                  .run()
-                  .catch((err: Error) => console.error("Failed to save assistant message:", err));
-
-                for (const citation of citations) {
-                  send(`event: citation\ndata: ${JSON.stringify(citation)}\n\n`);
+          const stream = new ReadableStream({
+            start(controller) {
+              // Writing to a cancelled stream is allowed to throw, and a throw here
+              // would escape into the AI service's own catch and lose the answer
+              // before it is saved. Swallowing it is what keeps the save reachable.
+              const send = (payload: string) => {
+                if (clientGone) return;
+                try {
+                  controller.enqueue(encoder.encode(payload));
+                } catch {
+                  // A cancel can beat its own handler, so a refused write means the
+                  // client is gone too
+                  clientGone = true;
                 }
-                send(
-                  `event: done\ndata: ${JSON.stringify({ messageId: assistantMsgId, usage })}\n\n`,
-                );
-                closeStream();
-              },
-              onError(err: Error) {
-                send(
-                  `event: error\ndata: ${JSON.stringify({ code: "AI_API_ERROR", message: err.message })}\n\n`,
-                );
-                closeStream();
-              },
-            };
+              };
+              const closeStream = () => {
+                if (clientGone) return;
+                try {
+                  controller.close();
+                } catch {
+                  clientGone = true;
+                }
+              };
 
-            finished = (async () => {
-              try {
-                if (doWebSearch) {
-                  await streamResponseWithWebSearch(apiKey, systemPrompt, content, callbacks);
-                } else {
-                  const messages = buildMessages(
-                    systemPrompt,
-                    history.map((h) => ({ role: h.role, content: h.content })),
-                    content,
+              const callbacks = {
+                onToken(token: string) {
+                  fullResponse += token;
+                  send(`event: token\ndata: ${JSON.stringify({ content: token })}\n\n`);
+                },
+                async onDone(usage: { inputTokens: number; outputTokens: number }) {
+                  // Parse citations with page number lookup for PDF citations
+                  const citations = parseCitations(fullResponse, fullText, pdfRow.pageCount);
+
+                  // Save the answer before telling the client about it, so a client
+                  // that already left cannot stop the save
+                  const assistantMsgId = idClock.newId();
+                  await d1Db
+                    .insert(chatMessages)
+                    .values({
+                      id: assistantMsgId,
+                      selectionId: selId,
+                      role: "assistant",
+                      content: fullResponse,
+                      citations: JSON.stringify(citations),
+                      createdAt: idClock.now(),
+                    })
+                    .run()
+                    .catch((err: Error) => console.error("Failed to save assistant message:", err));
+
+                  for (const citation of citations) {
+                    send(`event: citation\ndata: ${JSON.stringify(citation)}\n\n`);
+                  }
+                  send(
+                    `event: done\ndata: ${JSON.stringify({ messageId: assistantMsgId, usage })}\n\n`,
                   );
-                  await streamChatCompletion(apiKey, messages, callbacks);
+                  closeStream();
+                },
+                onError(err: Error) {
+                  send(
+                    `event: error\ndata: ${JSON.stringify({
+                      code: "AI_API_ERROR" satisfies ErrorCode,
+                      message: err.message,
+                    } satisfies ErrorPayload)}\n\n`,
+                  );
+                  closeStream();
+                },
+              };
+
+              finished = (async () => {
+                try {
+                  if (useWebSearch) {
+                    await streamResponseWithWebSearch(apiKey, systemPrompt, content, callbacks);
+                  } else {
+                    const messages = buildMessages(
+                      systemPrompt,
+                      history.map((h) => ({ role: h.role, content: h.content })),
+                      content,
+                    );
+                    await streamChatCompletion(apiKey, messages, callbacks);
+                  }
+                } catch (err) {
+                  send(
+                    `event: error\ndata: ${JSON.stringify({
+                      code: "AI_STREAM_ERROR" satisfies ErrorCode,
+                      message: String(err),
+                    } satisfies ErrorPayload)}\n\n`,
+                  );
+                  closeStream();
                 }
-              } catch (err) {
-                send(
-                  `event: error\ndata: ${JSON.stringify({ code: "AI_STREAM_ERROR", message: String(err) })}\n\n`,
-                );
-                closeStream();
-              }
-            })();
-          },
-          cancel() {
-            clientGone = true;
-          },
-        });
+              })();
+            },
+            cancel() {
+              clientGone = true;
+            },
+          });
 
-        // The save has to outlive the request the client just walked away from
-        c.executionCtx.waitUntil(finished);
+          // The save has to outlive the request the client just walked away from
+          c.executionCtx.waitUntil(finished);
 
-        return new Response(stream, {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-          },
-        });
-      })
+          return new Response(stream, {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          });
+        },
+      )
       .delete("/pdf/:pdfId", async (c) => {
         const deleted = await deletePdf(c.env.DB, c.env.PDF_BUCKET, c.req.param("pdfId"));
         if (!deleted) {

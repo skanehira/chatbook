@@ -124,11 +124,7 @@ async function readChatHistory(pdfId: string, selectionId: string): Promise<Stor
   return messages;
 }
 
-async function postChat(
-  pdfId: string,
-  selectionId: string,
-  payload: { content: string; useWebSearch: boolean },
-): Promise<Response> {
+async function postChat(pdfId: string, selectionId: string, payload: unknown): Promise<Response> {
   return SELF.fetch(`https://example.com/api/pdf/${pdfId}/selections/${selectionId}/chats`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -288,5 +284,57 @@ describe("POST /api/pdf/:pdfId/selections/:selId/chats", () => {
     const events = parseSse(await response.text());
     expect(events.map((e) => e.event)).toEqual(["error"]);
     expect(events[0].data).toEqual({ code: "AI_API_ERROR", message: expect.any(String) });
+  });
+
+  it('rejects a useWebSearch sent as the string "false" instead of reading it as on', async () => {
+    const { pdfId, selectionId } = await createSelection("chat-websearch-string");
+
+    const response = await postChat(pdfId, selectionId, {
+      content: "Where do Workers run?",
+      useWebSearch: "false",
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toStrictEqual({
+      error: { code: "VALIDATION_ERROR", message: "Invalid request body: useWebSearch" },
+    });
+    // The question is not stored either, so a rejected ask leaves no trace
+    expect(await readChatHistory(pdfId, selectionId)).toStrictEqual([]);
+  });
+
+  it("rejects an empty question rather than asking the model about nothing", async () => {
+    const { pdfId, selectionId } = await createSelection("chat-empty-content");
+
+    const response = await postChat(pdfId, selectionId, { content: "", useWebSearch: false });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toStrictEqual({
+      error: { code: "VALIDATION_ERROR", message: "Invalid request body: content" },
+    });
+    expect(await readChatHistory(pdfId, selectionId)).toStrictEqual([]);
+  });
+
+  it("leaves web search off when the request does not mention it", async () => {
+    const { pdfId, selectionId } = await createSelection("chat-websearch-default");
+    const calledUrls: string[] = [];
+
+    server.use(
+      http.post("https://api.deepseek.com/chat/completions", ({ request }) => {
+        calledUrls.push(request.url);
+        return new HttpResponse(chatCompletionsSse(["Everywhere"]), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }),
+    );
+
+    const response = await postChat(pdfId, selectionId, { content: "Where do Workers run?" });
+
+    expect(response.status).toBe(200);
+    const events = parseSse(await response.text());
+
+    expect(calledUrls).toEqual(["https://api.deepseek.com/chat/completions"]);
+    expect(events.map((e) => e.event)).toEqual(["token", "done"]);
+    expect(events[0].data).toEqual({ content: "Everywhere" });
   });
 });
