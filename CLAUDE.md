@@ -52,13 +52,16 @@ echo 'DEEPSEEK_API_KEY=dummy' > .dev.vars
 このアプリは canvas 描画・DOM 購読・pdf.js の命令的 API が本質なので使う場面が多いが、
 ルールは**残したまま**、使う側が import 行に
 `// oxlint-disable-next-line no-restricted-imports -- <理由>` を付けて理由を明記する運用にしている。
-新しく足すときも同じように理由を書くこと（既存10ファイルが手本）。
+新しく足すときも同じように理由を書くこと（既存9ファイルが手本）。
 
 **データ取得は理由にならない**。`useEffect` + `fetch` は SWR へ移してある（下記
-「状態管理とルーティング」）。残っている 10 ファイルはすべて外部システムとの同期
+「状態管理とルーティング」）。残っている 9 ファイルはすべて外部システムとの同期
 ——pdf.js の描画・`destroy` を伴うドキュメント構築、`document` / `window` / `ResizeObserver`
-の購読、URL や jotai ストアという React の外にある状態への書き戻し——であり、
-新しく足す `useEffect` もそのいずれかに当てはまるはず。
+の購読、URL への書き戻し——であり、新しく足す `useEffect` もそのいずれかに当てはまるはず。
+
+**SWR が持っているものを atom へ写すのも理由にならない**。写した瞬間に同じデータが
+2 箇所に載り、更新のたびに 1 レンダー遅れる。読み手が少ないなら props で配る
+（`AppPage` → `PdfViewer` / `ChatArea` の `book` がその形）。
 
 ## アーキテクチャ
 
@@ -188,11 +191,13 @@ PDF 引用は `fullText` 内の位置からページ番号を割り出してジ�
 ### 状態管理とルーティング
 
 **サーバから来たものは SWR、クライアントだけの状態は Jotai の atom**（`src/front/atoms/`）。
-`neverthrow` はテンプレート由来の未使用依存で、現在どこからも import していない。
+両方に同じものを載せないこと。`neverthrow` はテンプレート由来の未使用依存で、現在
+どこからも import していない。
 
 - `/` … 本棚（`ShelfPage`）。一覧は `useSWR("/api/pdfs")`
 - `/books/:pdfId` … リーダー（`AppPage`）。本は `useBook(pdfId)` で読むので
-  リロード・直リンクでも開ける
+  リロード・直リンクでも開ける。読んだ本は `PdfViewer` / `ChatArea` へ **props で**
+  渡す（atom に写さない。読み手はこの 2 つだけなので prop drilling にならない）
 
 SWR の使い方で押さえるところ:
 
@@ -211,7 +216,10 @@ SWR の使い方で押さえるところ:
   依存させないこと**——キャッシュヒット時は発火しない
 - **リーダーの state は本ごとに作り直す**: `AppPage` が `pdfId` を key にした jotai
   `Provider` を張る。開いているチャット・選択・ページはどれも 1 冊に属するので、
-  個別に reset する代わりに store ごと捨てる。本自体は store の外（SWR）にあるので残る
+  個別に reset する代わりに store ごと捨てる。本自体は store の外（SWR）にあるので残る。
+  **本をまたいで残したい設定は store に置けない**——`atomWithStorage` +
+  `{ getOnInit: true }` で localStorage に持たせる（`settingsAtom.ts` の
+  `keybindingModeAtom` / `useWebSearchAtom` がその形）
 - **テストは `src/test/swrTestCache.tsx` の `SwrTestCache` で包む**。SWR の既定キャッシュは
   モジュールレベルの singleton なので、包まないとテストが互いのキャッシュを見て
   実行順に依存する。`seed` を渡すとそのキーをサーバの代わりに使う
