@@ -1,4 +1,4 @@
-// oxlint-disable-next-line no-restricted-imports -- 本の切り替えに合わせたハイライト読み直しと、表示幅の ResizeObserver 購読に必要
+// oxlint-disable-next-line no-restricted-imports -- 本の切り替えに合わせたハイライト読み直し、表示幅の ResizeObserver 購読、ページ遷移時のスクロール位置リセットに必要
 import { useRef, useState, useCallback, useEffect } from "react";
 import { useAtomValue, useAtom } from "jotai";
 import {
@@ -143,6 +143,12 @@ export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
       observer.disconnect();
     };
   }, [pdfDocument]);
+
+  // A page turn swaps the canvas inside this same pane, so the scroll position
+  // would carry over and the next page would open part-way down.
+  useEffect(() => {
+    containerRef.current?.scrollTo({ top: 0 });
+  }, [currentPage]);
 
   // Draw the selection ourselves while the drag is still in progress. The
   // browser's own selection colour stacks up where pdf.js' spans overlap, which

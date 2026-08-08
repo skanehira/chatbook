@@ -511,6 +511,13 @@ test("vim keys turn pages, scroll, and toggle the outline by default", async ({ 
   await page.keyboard.press("k");
   await expect.poll(() => pageScrollTop(page)).toBe(0);
 
+  // A page turn starts the next page at its top, wherever the last one was left
+  await page.keyboard.press("j");
+  await expect.poll(() => pageScrollTop(page)).toBeGreaterThan(0);
+  await page.keyboard.press("l");
+  await expect(page.getByText("2 / 209", { exact: true })).toBeVisible();
+  await expect.poll(() => pageScrollTop(page)).toBe(0);
+
   await page.keyboard.press("t");
   await expect(outline).toBeHidden();
   await page.keyboard.press("t");
