@@ -30,11 +30,24 @@ export class ApiError extends Error {
   }
 }
 
-/** Code reported when the response body is not this API's error envelope. */
-const UNKNOWN_ERROR_CODE = "UNKNOWN";
-
-/** Code reported when a successful response does not match the caller's schema. */
-const INVALID_RESPONSE_CODE = "INVALID_RESPONSE";
+/**
+ * The codes this client invents, as opposed to the ones the server sends.
+ *
+ * Exported because `ApiError.code` is a plain `string` — the wire has to stay
+ * open to codes a newer server knows about — which means a caller comparing
+ * against a typed-out literal gets no help when it drifts. The server pins its
+ * own codes with `ERROR_CODES` + `satisfies`; this is the client's half.
+ */
+export const CLIENT_ERROR_CODES = {
+  /** The response body is not this API's error envelope. */
+  unknown: "UNKNOWN",
+  /** A successful response does not match the caller's schema. */
+  invalidResponse: "INVALID_RESPONSE",
+  /** The request never produced a response at all. */
+  network: "NETWORK_ERROR",
+  /** The caller's own signal cut the request short. */
+  aborted: "ABORTED",
+} as const;
 
 /**
  * Call the API and hand back a body that has been checked against `schema`.
@@ -54,25 +67,18 @@ export async function fetcher<S extends z.ZodType>(
   fetchFn: typeof fetch = fetch,
 ): Promise<z.output<S>> {
   const res = await fetchFn(url, init);
-  const body = await res.json().catch(() => null);
 
-  if (!res.ok) {
-    const failure = errorEnvelopeSchema.safeParse(body);
-    if (failure.success) {
-      throw new ApiError(failure.data.error.message, failure.data.error.code, res.status);
-    }
-    throw new ApiError(
-      `request to ${url} failed with status ${res.status}`,
-      UNKNOWN_ERROR_CODE,
-      res.status,
-    );
-  }
+  // Read before the body: a refusal is worded in exactly one place, so the two
+  // ways into this app (here, and the callers that read a response themselves)
+  // cannot drift apart.
+  if (!res.ok) throw await readRefusal(url, res);
 
+  const body: unknown = await res.json().catch(() => null);
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
     throw new ApiError(
       `unexpected response from ${url}`,
-      INVALID_RESPONSE_CODE,
+      CLIENT_ERROR_CODES.invalidResponse,
       res.status,
       "parse",
     );
@@ -81,18 +87,12 @@ export async function fetcher<S extends z.ZodType>(
   return parsed.data;
 }
 
-/** Code reported when the request never produced a response at all. */
-const NETWORK_ERROR_CODE = "NETWORK_ERROR";
-
-/** Code reported when the caller's own signal cut the request short. */
-const ABORTED_CODE = "ABORTED";
-
 /**
  * The refusal the server described, or the status when it described nothing.
  *
- * For the callers that read a response themselves rather than through
- * `fetcher` — the chat stream and the PDF binary, neither of which is JSON —
- * so that a refusal reaches them in the same words it reaches everyone else.
+ * The single place a refusal is turned into words, for `fetcher` and for the
+ * callers that read a response themselves — the chat stream and the PDF
+ * binary, neither of which is JSON.
  */
 export async function readRefusal(url: string, response: Response): Promise<ApiError> {
   const body: unknown = await response.json().catch(() => null);
@@ -101,7 +101,7 @@ export async function readRefusal(url: string, response: Response): Promise<ApiE
     ? new ApiError(envelope.data.error.message, envelope.data.error.code, response.status)
     : new ApiError(
         `request to ${url} failed with status ${response.status}`,
-        UNKNOWN_ERROR_CODE,
+        CLIENT_ERROR_CODES.unknown,
         response.status,
       );
 }
@@ -115,9 +115,14 @@ export async function readRefusal(url: string, response: Response): Promise<ApiE
  */
 export function networkFailure(url: string, cause: unknown): ApiError {
   if ((cause instanceof DOMException || cause instanceof Error) && cause.name === "AbortError") {
-    return new ApiError(cause.message, ABORTED_CODE, 0, "network");
+    return new ApiError(cause.message, CLIENT_ERROR_CODES.aborted, 0, "network");
   }
-  return new ApiError(`request to ${url} could not be sent`, NETWORK_ERROR_CODE, 0, "network");
+  return new ApiError(
+    `request to ${url} could not be sent`,
+    CLIENT_ERROR_CODES.network,
+    0,
+    "network",
+  );
 }
 
 /**

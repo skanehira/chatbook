@@ -186,6 +186,58 @@ describe("useChatStream", () => {
     expect(store.get(chatErrorAtom)).toBe("回答の取得に失敗しました: upstream is down");
   });
 
+  it("keeps an answer the server could not store on screen and says it will not last", async () => {
+    // The model finished and the tokens are already paid for; only the write
+    // failed. Discarding it would take a readable answer away from the reader
+    // for a reason that has nothing to do with the answer.
+    const { fetchFn, calls } = streamingFetchStub();
+    const { store, view } = renderChatStream(fetchFn);
+
+    let sent!: ResultAsync<string, ApiError>;
+    await act(async () => {
+      sent = view.result.current.sendMessage("p1", "s1", QUESTION, false);
+    });
+    await act(async () => {
+      calls[0].emit(tokenEvent("単一のインスタンスです"));
+      calls[0].emit(errorEvent("CHAT_SAVE_FAILED", "The answer could not be saved"));
+      calls[0].end();
+      await sent;
+    });
+
+    expect(store.get(chatMessagesAtom).map((m) => [m.role, m.content])).toStrictEqual([
+      ["user", QUESTION],
+      ["assistant", "単一のインスタンスです"],
+    ]);
+    expect(store.get(chatErrorAtom)).toBe(
+      "この回答は保存できませんでした。チャットを開き直すと消えます",
+    );
+    expect((await sent)._unsafeUnwrapErr().code).toBe("CHAT_SAVE_FAILED");
+  });
+
+  it("drops a half-written answer the model never finished", async () => {
+    // The other side of the split: a stream that broke mid-generation has no
+    // answer to keep, so leaving the fragment would read as a finished reply.
+    const { fetchFn, calls } = streamingFetchStub();
+    const { store, view } = renderChatStream(fetchFn);
+
+    let sent!: ResultAsync<string, ApiError>;
+    await act(async () => {
+      sent = view.result.current.sendMessage("p1", "s1", QUESTION, false);
+    });
+    await act(async () => {
+      calls[0].emit(tokenEvent("単一の"));
+      calls[0].emit(errorEvent("AI_STREAM_ERROR", "upstream closed the stream"));
+      calls[0].end();
+      await sent;
+    });
+
+    expect(store.get(chatMessagesAtom).map((m) => [m.role, m.content])).toStrictEqual([
+      ["user", QUESTION],
+    ]);
+    expect(store.get(streamingContentAtom)).toBe("");
+    expect(store.get(chatErrorAtom)).toBe("回答の取得に失敗しました: upstream closed the stream");
+  });
+
   it("keeps the server's own words when the request is refused before the stream starts", async () => {
     // The refusal used to become "HTTP 400", which threw away the one thing
     // that says what to change about the question.

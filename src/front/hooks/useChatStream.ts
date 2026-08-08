@@ -10,9 +10,10 @@ import {
   abortChatStreamAtom,
 } from "../atoms/chatAtom";
 import { createSseParser } from "../lib/sseParser";
-import { ApiError, networkFailure, readRefusal } from "../lib/fetcher";
+import { ApiError, CLIENT_ERROR_CODES, networkFailure, readRefusal } from "../lib/fetcher";
 import type { ChatMessage } from "../../shared/schemas/chat";
 import type { Citation } from "../../shared/schemas/citation";
+import type { ErrorCode } from "../../shared/schemas/error";
 import { chatSseEventSchema } from "../../shared/schemas/sse";
 
 interface ChatStreamOptions {
@@ -20,9 +21,20 @@ interface ChatStreamOptions {
   onDone?: (messageId: string) => void;
 }
 
+/**
+ * The answer arrived in full and only the write of it failed.
+ *
+ * Everything else that ends a stream early leaves no answer to speak of, so
+ * this one code is the difference between "there is nothing to show you" and
+ * "here it is, but it will not be here next time".
+ */
+const ANSWER_NOT_SAVED = "CHAT_SAVE_FAILED" satisfies ErrorCode;
+
 /** How a failure of this conversation is worded for the reader. */
 export const chatFailureMessage = (failure: ApiError) =>
-  `回答の取得に失敗しました: ${failure.message}`;
+  failure.code === ANSWER_NOT_SAVED
+    ? "この回答は保存できませんでした。チャットを開き直すと消えます"
+    : `回答の取得に失敗しました: ${failure.message}`;
 
 /**
  * Default clock. Kept at module level so its identity is stable across
@@ -93,7 +105,7 @@ export function useChatStream(fetchFn: typeof fetch = fetch, now: () => Date = s
           if (!reader) {
             throw new ApiError(
               `response to ${url} carried no body to read`,
-              "INVALID_RESPONSE",
+              CLIENT_ERROR_CODES.invalidResponse,
               response.status,
               "parse",
             );
@@ -144,18 +156,27 @@ export function useChatStream(fetchFn: typeof fetch = fetch, now: () => Date = s
             }
           }
 
-          if (streamError) throw streamError;
+          const finishedAnswer: ChatMessage = {
+            id: messageId || `temp-${now().getTime()}`,
+            role: "assistant",
+            content: fullContent,
+            citations,
+            createdAt: now().toISOString(),
+          };
 
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: messageId || `temp-${now().getTime()}`,
-              role: "assistant",
-              content: fullContent,
-              citations,
-              createdAt: now().toISOString(),
-            },
-          ]);
+          if (streamError) {
+            // Two very different endings arrive by the same door. A stream that
+            // broke mid-generation has no answer to keep. One the server could
+            // not store does: the model finished, the tokens are paid for, and
+            // the reader can still read and copy it — they are only told it
+            // will not be there when they come back.
+            if (streamError.code === ANSWER_NOT_SAVED) {
+              setMessages((prev) => [...prev, finishedAnswer]);
+            }
+            throw streamError;
+          }
+
+          setMessages((prev) => [...prev, finishedAnswer]);
           setStreamingContent("");
           options.onDone?.(messageId);
           return ok(messageId);
@@ -165,7 +186,7 @@ export function useChatStream(fetchFn: typeof fetch = fetch, now: () => Date = s
           // Leaving the chat delivered no answer either, but the reader asked
           // for that: the atom the panel reads stays clear, and only a caller
           // that inspects the result can tell it apart.
-          if (failure.code === "ABORTED") {
+          if (failure.code === CLIENT_ERROR_CODES.aborted) {
             aborted = true;
             return err(failure);
           }
