@@ -131,6 +131,25 @@ export async function openPdf(
 }
 
 /**
+ * Delete a book together with everything it owns: its selections and chat
+ * messages (via the schema's ON DELETE CASCADE) and its R2 objects.
+ * D1 is cleared first — if the R2 cleanup then fails, only an unreachable
+ * object is left behind, whereas the reverse order would leave a book on the
+ * shelf whose binary is gone.
+ * Returns false when no such book exists.
+ */
+export async function deletePdf(db: D1Database, bucket: R2Bucket, pdfId: string): Promise<boolean> {
+  const d1Db = drizzle(db);
+  const pdf = await d1Db.select().from(pdfs).where(eq(pdfs.id, pdfId)).get();
+  if (!pdf) return false;
+
+  await d1Db.delete(pdfs).where(eq(pdfs.id, pdfId));
+  await bucket.delete([pdfObjectKey(pdf.fileHash), thumbnailObjectKey(pdf.fileHash)]);
+
+  return true;
+}
+
+/**
  * Get a PDF record by id, including its selections.
  */
 export async function getPdf(db: D1Database, bucket: R2Bucket, pdfId: string) {

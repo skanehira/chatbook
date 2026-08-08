@@ -7,6 +7,7 @@ import {
   openPdf,
   getPdf,
   listPdfs,
+  deletePdf,
   thumbnailObjectKey,
   THUMBNAIL_CONTENT_TYPE,
 } from "../services/pdfService";
@@ -412,6 +413,14 @@ export const pdfRoute = new Hono<Env>()
         Connection: "keep-alive",
       },
     });
+  })
+  .delete("/pdf/:pdfId", async (c) => {
+    const deleted = await deletePdf(c.env.DB, c.env.PDF_BUCKET, c.req.param("pdfId"));
+    if (!deleted) {
+      return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
+    }
+
+    return c.json({ deleted: true });
   })
   .delete("/pdf/:pdfId/selections/:selId", async (c) => {
     const selId = c.req.param("selId");
