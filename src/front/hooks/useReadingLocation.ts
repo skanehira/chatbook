@@ -1,7 +1,8 @@
-// oxlint-disable-next-line no-restricted-imports -- 読書位置を URL (外部状態) へ同期するために必要
+// oxlint-disable-next-line no-restricted-imports -- 読書位置を URL (外部状態) へ同期し、SWR が解決したページを共有ストアへ反映するために必要
 import { useEffect, useRef } from "react";
 import { useAtom } from "jotai";
 import { useSearchParams } from "react-router";
+import useSWRImmutable from "swr/immutable";
 import { currentPageAtom } from "../atoms/pdfAtom";
 
 /** Resolves a quoted passage to the page it appears on, or null if absent. */
@@ -76,18 +77,14 @@ export function useReadingLocation(
     setSearchParamsRef.current(next, { replace: true });
   }, [currentPage]);
 
+  // Where a passage sits in a book cannot change while the book is open, so
+  // this is asked once per link and never revalidated.
+  const { data: linkedPage } = useSWRImmutable(
+    pdfId && linkedPassage ? [pdfId, "locate", linkedPassage] : null,
+    () => locatePassage(pdfId!, linkedPassage!),
+  );
+
   useEffect(() => {
-    if (!pdfId || !linkedPassage) return;
-
-    let cancelled = false;
-    locatePassage(pdfId, linkedPassage)
-      .then((page) => {
-        if (!cancelled && page) setCurrentPage(page);
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [pdfId, linkedPassage, locatePassage, setCurrentPage]);
+    if (linkedPage) setCurrentPage(linkedPage);
+  }, [linkedPage, setCurrentPage]);
 }

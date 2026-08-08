@@ -1,5 +1,6 @@
 // oxlint-disable-next-line no-restricted-imports -- PDF バイナリを取得して pdf.js のドキュメントを構築する初期化処理に必要
 import { useState, useEffect, useRef } from "react";
+import useSWRMutation from "swr/mutation";
 import type * as pdfjsTypes from "pdfjs-dist";
 import type { PdfDoc } from "../atoms/pdfAtom";
 import { pdfjsLib, PDFJS_ASSET_OPTIONS } from "../lib/pdfjsConfig";
@@ -7,12 +8,18 @@ import { renderCoverThumbnail } from "../lib/pdfLoader";
 import { fetcher } from "../lib/fetcher";
 import { bookDetailSchema, thumbnailStoredSchema } from "../../shared/schemas/book";
 
+/** Where a book's cover is written, and the key the write is tracked under. */
+const coverKey = (pdfId: string) => `/api/pdf/${pdfId}/thumbnail`;
+
 /**
  * Books opened before covers existed have no thumbnail in storage. The reader
  * already holds the rendered document, so generate the cover here and store it
  * once; otherwise those books would stay blank on the shelf forever.
+ *
+ * A book that already has a cover is left alone, so this costs one read for
+ * every book but a write only for the ones that predate covers.
  */
-async function backfillCover(
+export async function storeCoverIfMissing(
   pdfId: string,
   doc: pdfjsTypes.PDFDocumentProxy,
   fetchFn: typeof fetch,
@@ -25,7 +32,7 @@ async function backfillCover(
     if (!thumbnail) return;
 
     await fetcher(
-      `/api/pdf/${pdfId}/thumbnail`,
+      coverKey(pdfId),
       thumbnailStoredSchema,
       {
         method: "PUT",
@@ -46,6 +53,14 @@ async function backfillCover(
 export function usePdfDocument(pdfDoc: PdfDoc | null, fetchFn: typeof fetch = fetch) {
   const [pdfDocument, setPdfDocument] = useState<pdfjsTypes.PDFDocumentProxy | null>(null);
   const loadingRef = useRef<string | null>(null);
+
+  // Storing a cover is a write, so it is triggered from the document being
+  // ready rather than being an effect of its own.
+  const { trigger: backfillCover } = useSWRMutation(
+    pdfDoc ? coverKey(pdfDoc.id) : null,
+    (_key: string, { arg }: { arg: { pdfId: string; doc: pdfjsTypes.PDFDocumentProxy } }) =>
+      storeCoverIfMissing(arg.pdfId, arg.doc, fetchFn),
+  );
 
   useEffect(() => {
     if (!pdfDoc) {
@@ -77,7 +92,7 @@ export function usePdfDocument(pdfDoc: PdfDoc | null, fetchFn: typeof fetch = fe
         if (cancelled) return;
 
         setPdfDocument(doc);
-        void backfillCover(pdfId, doc, fetchFn);
+        void backfillCover({ pdfId, doc });
       } catch (err) {
         console.error("Failed to load PDF for rendering:", err);
       }

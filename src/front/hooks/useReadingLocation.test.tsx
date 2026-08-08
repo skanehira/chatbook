@@ -5,6 +5,7 @@ import { Provider, createStore, useSetAtom } from "jotai";
 import type { ReactNode } from "react";
 import { useReadingLocation, type LocatePassage } from "./useReadingLocation";
 import { currentPageAtom } from "../atoms/pdfAtom";
+import { SwrTestCache } from "../../test/swrTestCache";
 
 const PDF_ID = "01JBOOK";
 
@@ -28,9 +29,11 @@ function renderAt(
   // page 20" apart from "bounced through page 1 first"
   const visited: string[] = [];
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <Provider store={store}>
-      <MemoryRouter initialEntries={[url]}>{children}</MemoryRouter>
-    </Provider>
+    <SwrTestCache>
+      <Provider store={store}>
+        <MemoryRouter initialEntries={[url]}>{children}</MemoryRouter>
+      </Provider>
+    </SwrTestCache>
   );
 
   return {
