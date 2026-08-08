@@ -1,5 +1,6 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 import type { ChatMessage } from "../../atoms/chatAtom";
 import { CitationBadge } from "./CitationBadge";
 import { stripSources } from "../../lib/stripSources";
@@ -24,11 +25,16 @@ const MARKDOWN_COMPONENTS = {
   a: (props: object) => (
     <a className="text-blue-600 underline" target="_blank" rel="noopener noreferrer" {...props} />
   ),
-  code: (props: { className?: string }) =>
-    props.className?.startsWith("language-") ? (
-      <code className="block" {...props} />
+  // rehype-highlight prepends `hljs` to the fence's `language-x`, so the class
+  // that marks a block has to be searched for rather than matched at the start
+  code: ({ className, ...props }: { className?: string }) =>
+    className?.includes("language-") ? (
+      <code className={`block ${className}`} {...props} />
     ) : (
-      <code className="rounded bg-gray-200 px-1 py-0.5 font-mono text-[0.85em]" {...props} />
+      <code
+        className={`rounded bg-gray-200 px-1 py-0.5 font-mono text-[0.85em] ${className ?? ""}`}
+        {...props}
+      />
     ),
   pre: (props: object) => (
     <pre
@@ -69,7 +75,11 @@ export function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
           <div className="whitespace-pre-wrap break-words">{message.content}</div>
         ) : (
           <div className="break-words">
-            <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+              components={MARKDOWN_COMPONENTS}
+            >
               {stripSources(message.content)}
             </Markdown>
           </div>

@@ -37,6 +37,30 @@ describe("ChatMessageBubble", () => {
     expect(code.closest("pre")).not.toBeNull();
   });
 
+  it("colors keywords in a fenced code block that names its language", () => {
+    const { container } = render(
+      <ChatMessageBubble message={message({ content: "```js\nconst app = 1\n```" })} />,
+    );
+
+    const code = container.querySelector("pre code");
+    expect(code?.className).toBe("block hljs language-js");
+    expect(screen.getByText("const").className).toBe("hljs-keyword");
+  });
+
+  // The answer streams in token by token, so a fence is rendered many times
+  // while its language is still half-typed and names nothing that exists
+  it.each([
+    ["a language nothing can highlight", "```mermaid\ngraph TD\n```"],
+    ["a language name still being streamed", "```typescr\ngraph TD"],
+  ])("renders a code block with %s as plain text", (_name, content) => {
+    const { container } = render(<ChatMessageBubble message={message({ content })} />);
+
+    // innerHTML, because highlighting would break the code into <span>s while
+    // leaving textContent identical
+    const code = container.querySelector("pre code");
+    expect(code?.innerHTML).toBe("graph TD\n");
+  });
+
   it("shows the answer without the Sources section, which the badges already carry", () => {
     const content = `Workers はエッジで動きます。\n\n## Sources\n[1] 「エッジで動きます」（本書 第1章）`;
     render(

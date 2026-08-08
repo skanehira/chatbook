@@ -1,4 +1,14 @@
 @import "tailwindcss";
+@import "highlight.js/styles/github-dark.css";
+
+/*
+ * The theme paints its own background on every highlighted block. The chat
+ * bubble already gives `pre` its background, so let that one win and keep the
+ * theme to colouring the tokens.
+ */
+.hljs {
+  background: transparent;
+}
 
 /*
  * Text layer produced by pdf.js `TextLayer`. The spans are invisible copies of
