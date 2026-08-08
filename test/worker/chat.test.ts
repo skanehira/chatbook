@@ -38,10 +38,11 @@ async function createSelection(tag: string): Promise<{ pdfId: string; selectionI
 
   const selectionResponse = await SELF.fetch(`https://example.com/api/pdf/${pdfId}/selections`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       selectedText: HIGHLIGHTED_PASSAGE,
       pageNumber: 1,
-      positionData: { startIndex: 0, endIndex: 1, rects: [] },
+      positionData: { rects: [] },
     }),
   });
   const { id: selectionId } = (await selectionResponse.json()) as { id: string };
@@ -130,6 +131,7 @@ async function postChat(
 ): Promise<Response> {
   return SELF.fetch(`https://example.com/api/pdf/${pdfId}/selections/${selectionId}/chats`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 }

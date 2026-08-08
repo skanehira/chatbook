@@ -456,6 +456,136 @@ describe("GET /api/pdf/:pdfId/locate", () => {
   });
 });
 
+/** Post a highlight the way the viewer does, with the body left to the caller. */
+async function postSelection(pdfId: string, body: unknown): Promise<Response> {
+  return SELF.fetch(`https://example.com/api/pdf/${pdfId}/selections`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** The highlights of a book, as the viewer receives them. */
+async function readSelections(pdfId: string): Promise<Record<string, unknown>[]> {
+  const response = await SELF.fetch(`https://example.com/api/pdf/${pdfId}`);
+  const { selections } = (await response.json()) as { selections: Record<string, unknown>[] };
+  return selections;
+}
+
+describe("POST /api/pdf/:pdfId/selections", () => {
+  it("rejects a pageNumber sent as a string instead of storing it in the integer column", async () => {
+    const book = await uploadBook({ tag: "sel-page-string", fileName: "sel-page-string.pdf" });
+
+    const response = await postSelection(book.id, {
+      selectedText: "Workers",
+      pageNumber: "3",
+      positionData: { rects: [] },
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toStrictEqual({
+      error: { code: "VALIDATION_ERROR", message: "Invalid request body: pageNumber" },
+    });
+    expect(await readSelections(book.id)).toStrictEqual([]);
+  });
+
+  it("rejects positionData that carries no rects, which the viewer cannot draw", async () => {
+    const book = await uploadBook({ tag: "sel-no-rects", fileName: "sel-no-rects.pdf" });
+
+    const response = await postSelection(book.id, {
+      selectedText: "Workers",
+      pageNumber: 1,
+      positionData: { pageWidth: 600 },
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toStrictEqual({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Invalid request body: positionData.rects",
+      },
+    });
+    expect(await readSelections(book.id)).toStrictEqual([]);
+  });
+
+  it("keeps only rects and pageWidth when the viewer posts its whole measurement", async () => {
+    const book = await uploadBook({ tag: "sel-strip", fileName: "sel-strip.pdf" });
+    const rects = [{ x: 40, y: 40, width: 160, height: 24 }];
+
+    const response = await postSelection(book.id, {
+      selectedText: "Workers",
+      pageNumber: 2,
+      positionData: { startIndex: 0, endIndex: 7, pageNumber: 2, rects, pageWidth: 600 },
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toStrictEqual({
+      id: expect.any(String),
+      selectedText: "Workers",
+      pageNumber: 2,
+      positionData: { rects, pageWidth: 600 },
+      createdAt: expect.any(String),
+    });
+    expect(await readSelections(book.id)).toStrictEqual([
+      {
+        id: expect.any(String),
+        selectedText: "Workers",
+        pageNumber: 2,
+        positionData: { rects, pageWidth: 600 },
+        color: "#FFEB3B",
+        createdAt: expect.any(String),
+      },
+    ]);
+  });
+});
+
+describe("GET /api/pdf/:pdfId highlight geometry", () => {
+  it("still serves a book whose stored positionData cannot be read", async () => {
+    const book = await uploadBook({ tag: "sel-unreadable", fileName: "sel-unreadable.pdf" });
+    // Written straight to D1: the endpoint refuses to store either of these
+    // shapes now, but rows like them predate that.
+    await env.DB.prepare(
+      "INSERT INTO selections (id, pdf_id, selected_text, page_number, position_data, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)",
+    )
+      .bind(
+        "sel-legacy-shape",
+        book.id,
+        "旧い形のハイライト",
+        1,
+        JSON.stringify({ startIndex: 0, endIndex: 1, pageNumber: 1, rects: [], pageWidth: 900 }),
+        "#FFEB3B",
+        "2026-01-01T00:00:00Z",
+        "sel-broken-json",
+        book.id,
+        "壊れたハイライト",
+        2,
+        "{not json",
+        "#FF9800",
+        "2026-01-02T00:00:00Z",
+      )
+      .run();
+
+    expect(await readSelections(book.id)).toStrictEqual([
+      {
+        id: "sel-legacy-shape",
+        selectedText: "旧い形のハイライト",
+        pageNumber: 1,
+        positionData: { rects: [], pageWidth: 900 },
+        color: "#FFEB3B",
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: "sel-broken-json",
+        selectedText: "壊れたハイライト",
+        pageNumber: 2,
+        positionData: { rects: [] },
+        color: "#FF9800",
+        createdAt: "2026-01-02T00:00:00Z",
+      },
+    ]);
+  });
+});
+
 /** An IdClock that always hands out the same id and timestamp. */
 function fixedIdClock(id: string, now: string): IdClock {
   return { newId: () => id, now: () => now };

@@ -19,6 +19,8 @@ import {
   streamResponseWithWebSearch,
 } from "../services/deepseekService";
 import { buildMessages, findPageNumber, parseCitations } from "../services/chatService";
+import { createSelectionRequestSchema } from "../../shared/schemas/selection";
+import { validate } from "./validation";
 
 type Env = {
   Bindings: {
@@ -197,7 +199,7 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
 
         return c.json(result);
       })
-      .post("/pdf/:pdfId/selections", async (c) => {
+      .post("/pdf/:pdfId/selections", validate("json", createSelectionRequestSchema), async (c) => {
         const pdfId = c.req.param("pdfId");
         const d1Db = drizzle(c.env.DB);
 
@@ -207,18 +209,10 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
         }
 
-        const body = await c.req.json().catch(() => null);
-        if (!body) {
-          return c.json({ error: { code: "VALIDATION_ERROR", message: "Invalid JSON" } }, 400);
-        }
-
-        const { selectedText, pageNumber, positionData } = body;
-        if (!selectedText || !pageNumber || !positionData) {
-          return c.json(
-            { error: { code: "VALIDATION_ERROR", message: "Missing required fields" } },
-            400,
-          );
-        }
+        // Validated, so positionData is already down to the shape the viewer
+        // draws from: the measurement's other fields are stripped here rather
+        // than stored and read back as an unknown blob.
+        const { selectedText, pageNumber, positionData } = c.req.valid("json");
 
         const id = idClock.newId();
         const now = idClock.now();

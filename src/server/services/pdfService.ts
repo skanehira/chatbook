@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { desc, eq } from "drizzle-orm";
 import { pdfs, selections } from "../db/schema";
 import type { BookSummary, PdfMetadata } from "../../shared/schemas/book";
+import { positionDataSchema, type PositionData } from "../../shared/schemas/selection";
 
 /**
  * R2 object key for a PDF, derived from its content hash.
@@ -155,6 +156,25 @@ export async function deletePdf(db: D1Database, bucket: R2Bucket, pdfId: string)
 }
 
 /**
+ * The geometry of a stored highlight.
+ *
+ * Deliberately forgiving, unlike the endpoint that writes it: rows predating
+ * the enforced shape carry the viewer's whole measurement, and one row that
+ * cannot be read must not take the book it belongs to down with it. Such a
+ * highlight is served without rects, so the book still opens and the passage
+ * stays in the list.
+ */
+function readPositionData(stored: string): PositionData {
+  try {
+    const parsed = positionDataSchema.safeParse(JSON.parse(stored));
+    if (parsed.success) return parsed.data;
+  } catch {
+    // Not even JSON — fall through to the empty geometry
+  }
+  return { rects: [] };
+}
+
+/**
  * Get a PDF record by id, including its selections.
  */
 export async function getPdf(db: D1Database, bucket: R2Bucket, pdfId: string) {
@@ -173,7 +193,7 @@ export async function getPdf(db: D1Database, bucket: R2Bucket, pdfId: string) {
       id: s.id,
       selectedText: s.selectedText,
       pageNumber: s.pageNumber,
-      positionData: JSON.parse(s.positionData),
+      positionData: readPositionData(s.positionData),
       color: s.color,
       createdAt: s.createdAt,
     })),
