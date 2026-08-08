@@ -43,6 +43,9 @@ export async function storeCoverIfMissing(
       fetchFn,
     );
   } catch (err) {
+    // The same deliberate silence as rendering the cover itself: this runs
+    // behind a book the reader has already opened, and a shelf falling back to
+    // the title is not something to interrupt them about.
     console.warn("Failed to backfill the book cover (non-critical):", err);
   }
 }

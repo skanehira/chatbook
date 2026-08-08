@@ -171,9 +171,9 @@ union + `satisfies` で固定する。
 捨てた呼び出し元があっても画面が無言にならないようにしてある。新しい送信の開始と、
 別のハイライトを開いたときにクリアする。
 
-意図的に握りつぶしているのは 3 か所だけで、いずれも理由をコメントに書いてある:
-表紙の生成（`pdfLoader.ts`。本棚がタイトルで代替する）、SSE 断片のパース
-（`sseParser.ts` / `deepseekService.ts`）、クライアント切断後の送信
+意図的に握りつぶしているのは 3 種類だけで、いずれも理由をコメントに書いてある:
+表紙（`pdfLoader.ts` の生成と `usePdfDocument.ts` の後追い保存。本棚がタイトルで代替する）、
+SSE 断片のパース（`sseParser.ts` / `deepseekService.ts`）、クライアント切断後の送信
 （`routes/pdf.ts`。回答の保存を守るため）。
 
 #### `positionData` の正準形
