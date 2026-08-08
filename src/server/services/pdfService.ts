@@ -19,6 +19,20 @@ export function thumbnailObjectKey(fileHash: string): string {
 
 export const THUMBNAIL_CONTENT_TYPE = "image/webp";
 
+/**
+ * The two non-deterministic values every write needs. Injected so tests can
+ * pin the ids and timestamps a request produces.
+ */
+export interface IdClock {
+  newId: () => string;
+  now: () => string;
+}
+
+export const systemIdClock: IdClock = {
+  newId: ulid,
+  now: () => new Date().toISOString(),
+};
+
 export interface PdfMetadata {
   id: string;
   fileName: string;
@@ -78,6 +92,7 @@ export async function openPdf(
   db: D1Database,
   bucket: R2Bucket,
   input: OpenPdfInput,
+  idClock: IdClock = systemIdClock,
 ): Promise<PdfMetadata> {
   const { fileName, fileHash, fullText, pageCount, arrayBuffer, thumbnail } = input;
   const d1Db = drizzle(db);
@@ -103,7 +118,7 @@ export async function openPdf(
     // whatever was stored before. Selections and chats stay attached to the id.
     await d1Db
       .update(pdfs)
-      .set({ fileName, fullText, pageCount, updatedAt: new Date().toISOString() })
+      .set({ fileName, fullText, pageCount, updatedAt: idClock.now() })
       .where(eq(pdfs.id, existing.id));
 
     return { id: existing.id, fileName, pageCount, fullText };
@@ -113,8 +128,8 @@ export async function openPdf(
     httpMetadata: { contentType: "application/pdf" },
   });
 
-  const id = ulid();
-  const now = new Date().toISOString();
+  const id = idClock.newId();
+  const now = idClock.now();
 
   await d1Db.insert(pdfs).values({
     id,
