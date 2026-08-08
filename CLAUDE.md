@@ -78,6 +78,43 @@ pdf.js は workerd 上で動かない（native canvas を要求して落ちる�
 (`src/server/services/pdfService.ts` の `openPdf`)。ここを「既存レコードをそのまま返す」に
 戻すと、古いメタデータが残り続ける不具合になる。
 
+### 外部入力のバリデーション（zod）
+
+front と server が交わす形は `src/shared/schemas/` に zod スキーマとして 1 箇所だけ置き、
+型は `z.infer` で導出する（`error.ts` / `book.ts` / `selection.ts` / `citation.ts` /
+`chat.ts` / `sse.ts`）。front・server どちらにも同じ概念の型を書かないこと。
+
+- **サーバの受け口**は `src/server/routes/validation.ts` の `validate(target, schema)`
+  （`@hono/zod-validator` のラッパ）を通す。素の `zValidator` は zod のレポートをそのまま
+  400 で返すため、クライアントが読む `error.message` を持たない。`validate` は
+  `{ error: { code: "VALIDATION_ERROR", message: "Invalid request body: pageNumber" } }`
+  の形に揃える。メッセージは zod の文言ではなく違反フィールドのパスなので、zod の更新で
+  変わらない
+- **クライアントの受け口**は `src/front/lib/fetcher.ts` の `fetcher(url, schema, init?, fetchFn?)`。
+  `schema.safeParse` を通った値だけを返し、失敗はすべて `ApiError`（`message` / `code` /
+  `status`）で throw する。サーバの `error.code` が取れないときは `"UNKNOWN"`、
+  レスポンスがスキーマに合わないときは `"INVALID_RESPONSE"`
+- **`chatService.ts` の `LlmMessage`** は LLM 送信用で `system` role を含み、保存される
+  `ChatMessage`（`shared/schemas/chat.ts`）とは別物。shared に混ぜないこと
+
+エラー形式は 2 系統あり、**ペイロード `{ code, message }` だけを共通化して transport の差は
+残している**。ストリーム開始前は HTTP ステータス + `{ error: { code, message } }`、開始後は
+`event: error` + 裸の `{ code, message }`。SSE ではイベント名が判別子なので `error` で包む
+意味がない。ワイヤ上の `code` は前方互換のため `z.string()` で受け（読み手は知らない code を
+渡す以外にできることがない）、サーバ側の構築だけ `shared/schemas/error.ts` の `ErrorCode`
+union + `satisfies` で固定する。
+
+#### `positionData` の正準形
+
+ハイライトの座標は `{ rects, pageWidth? }` が正準形で、**未知のキーは strip する**。
+
+- 書き込み（`POST /api/pdf/:pdfId/selections`）は `validate("json", ...)` で厳格に検証する。
+  ビューアは計測結果（`startIndex` / `endIndex` / `pageNumber` も持つ）を丸ごと送ってくるが、
+  保存されるのは正準形だけ
+- 読み出し（`pdfService.ts` の `readPositionData`）は `safeParse` + `{ rects: [] }`
+  フォールバック。**ここを strict にすると正準形でない既存行のある本が開けなくなる**。
+  JSON として壊れた行 1 件で本ごと 500 にしないためでもある
+
 ### pdf.js のランタイムアセット
 
 `scripts/copy-pdfjs-assets.mjs`（`postinstall` で実行）が `cmaps` と `standard_fonts` を
@@ -138,7 +175,7 @@ PDF 引用は `fullText` 内の位置からページ番号を割り出してジ�
 
 ### 状態管理とルーティング
 
-Jotai の atom（`src/front/atoms/`）。`swr` / `zod` / `neverthrow` はテンプレート由来の
+Jotai の atom（`src/front/atoms/`）。`swr` / `neverthrow` はテンプレート由来の
 未使用依存で、現在どこからも import していない。
 
 - `/` … 本棚（`ShelfPage`）
