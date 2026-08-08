@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from "vite-plus/test";
 import { env, applyD1Migrations, SELF } from "cloudflare:test";
 import { MINIMAL_PDF_BYTES } from "./fixtures/minimalPdf";
+import app from "../../src/server/index";
 import {
   openPdf,
   pdfObjectKey,
@@ -82,6 +83,70 @@ async function countRows(table: string, column: string, value: string): Promise<
     .first()) as { count: number };
   return row.count;
 }
+
+/**
+ * Bindings that fail every call, so the paths taken when D1 or R2 is
+ * unavailable can be driven without breaking the shared database.
+ */
+function unavailableBindings() {
+  return {
+    DB: {
+      prepare() {
+        throw new Error("D1 is unavailable");
+      },
+    },
+    PDF_BUCKET: {
+      head: () => Promise.reject(new Error("R2 is unavailable")),
+      get: () => Promise.reject(new Error("R2 is unavailable")),
+    },
+    DEEPSEEK_API_KEY: "test-key",
+  } as unknown as { DB: D1Database; PDF_BUCKET: R2Bucket; DEEPSEEK_API_KEY: string };
+}
+
+describe("failures outside a route's own handling", () => {
+  it("answers in the error envelope when the shelf cannot be read from storage", async () => {
+    const response = await app.request(
+      "https://example.com/api/pdfs",
+      undefined,
+      unavailableBindings(),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toStrictEqual({
+      error: { code: "INTERNAL_ERROR", message: "Unexpected server error" },
+    });
+  });
+
+  it("answers in the error envelope when a route's own query throws", async () => {
+    // No try/catch stands between this route and D1, so before the app had an
+    // onError the reply was a text/plain "Internal Server Error" outside the
+    // envelope every client reads.
+    const response = await app.request(
+      "https://example.com/api/pdf/any-book/file",
+      undefined,
+      unavailableBindings(),
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(await response.json()).toStrictEqual({
+      error: { code: "INTERNAL_ERROR", message: "Unexpected server error" },
+    });
+  });
+
+  it("answers in the error envelope for an API path that does not exist", async () => {
+    const response = await app.request(
+      "https://example.com/api/no-such-endpoint",
+      undefined,
+      unavailableBindings(),
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toStrictEqual({
+      error: { code: "ROUTE_NOT_FOUND", message: "No such API endpoint" },
+    });
+  });
+});
 
 describe("POST /api/pdf/open", () => {
   it("uploads a PDF file and returns its metadata", async () => {
@@ -698,7 +763,7 @@ describe("openPdf with an injected IdClock", () => {
   it("stores a new book under the id and timestamps the clock hands out", async () => {
     const fileHash = "hash-idclock-new";
 
-    const metadata = await openPdf(
+    const stored = await openPdf(
       env.DB,
       env.PDF_BUCKET,
       {
@@ -711,7 +776,7 @@ describe("openPdf with an injected IdClock", () => {
       fixedIdClock("book-idclock-new", "2026-01-02T03:04:05.678Z"),
     );
 
-    expect(metadata).toStrictEqual({
+    expect(stored._unsafeUnwrap()).toStrictEqual({
       id: "book-idclock-new",
       fileName: "injected.pdf",
       pageCount: 3,
@@ -745,14 +810,14 @@ describe("openPdf with an injected IdClock", () => {
       fixedIdClock("book-idclock-reopen", "2026-01-02T03:04:05.678Z"),
     );
 
-    const metadata = await openPdf(
+    const reopened = await openPdf(
       env.DB,
       env.PDF_BUCKET,
       { ...input, fileName: "second.pdf", fullText: "再抽出した本文", pageCount: 4 },
       fixedIdClock("book-idclock-ignored", "2026-03-04T05:06:07.891Z"),
     );
 
-    expect(metadata).toStrictEqual({
+    expect(reopened._unsafeUnwrap()).toStrictEqual({
       id: "book-idclock-reopen",
       fileName: "second.pdf",
       pageCount: 4,

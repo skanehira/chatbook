@@ -1,6 +1,7 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
+import { ResultAsync } from "neverthrow";
 import { pdfs, selections, chatMessages } from "../db/schema";
 import {
   openPdf,
@@ -28,6 +29,7 @@ import { locateQuerySchema } from "../../shared/schemas/book";
 import { createSelectionRequestSchema } from "../../shared/schemas/selection";
 import { sendChatRequestSchema } from "../../shared/schemas/chat";
 import type { ErrorCode, ErrorPayload } from "../../shared/schemas/error";
+import { storageFailure, type ServiceError } from "../services/serviceError";
 import { validate } from "./validation";
 
 type Env = {
@@ -40,6 +42,43 @@ type Env = {
 
 /** A cover is one page rendered 400px wide; nothing that big is one. */
 const MAX_THUMBNAIL_BYTES = 2 * 1024 * 1024;
+
+/** What every endpoint says about a book id that is not on the shelf. */
+const PDF_NOT_FOUND = {
+  code: "PDF_NOT_FOUND" satisfies ErrorCode,
+  message: "PDF not found",
+} as const;
+
+/**
+ * The reply a store that refused to answer turns into.
+ *
+ * The cause never leaves the server, but it does reach its log: a 500 nobody
+ * can explain is worse than the plain-text one this replaced.
+ */
+function storageFailureResponse(c: Context<Env>, cause: unknown) {
+  console.error("Storage failure:", cause);
+  return c.json(
+    { error: { code: "INTERNAL_ERROR" satisfies ErrorCode, message: "Unexpected server error" } },
+    500,
+  );
+}
+
+/**
+ * The reply a failed service call turns into.
+ *
+ * The two cases a service reports map onto the two a client can act on: the
+ * thing is not there (404, in the endpoint's own words), or the store refused
+ * and nobody can do anything but try again (500).
+ */
+function serviceFailureResponse(
+  c: Context<Env>,
+  failure: ServiceError,
+  missing: { code: ErrorCode; message: string },
+) {
+  return failure.type === "NOT_FOUND"
+    ? c.json({ error: missing }, 404)
+    : storageFailureResponse(c, failure.cause);
+}
 
 /** A WebP file is a RIFF container whose form type, at offset 8, is "WEBP". */
 function isWebp(body: ArrayBuffer): boolean {
@@ -108,37 +147,42 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
         const thumbnail =
           thumbnailField instanceof File ? await thumbnailField.arrayBuffer() : undefined;
 
-        try {
-          const metadata = await openPdf(
-            c.env.DB,
-            c.env.PDF_BUCKET,
-            {
-              fileName: file.name,
-              fileHash,
-              fullText,
-              pageCount,
-              arrayBuffer,
-              thumbnail,
-            },
-            idClock,
-          );
-          return c.json(metadata);
-        } catch (err) {
-          console.error("PDF open error:", err);
-          return c.json(
-            {
-              error: {
-                code: "PDF_EXTRACT_FAILED" satisfies ErrorCode,
-                message: "Failed to process PDF",
+        const stored = await openPdf(
+          c.env.DB,
+          c.env.PDF_BUCKET,
+          {
+            fileName: file.name,
+            fileHash,
+            fullText,
+            pageCount,
+            arrayBuffer,
+            thumbnail,
+          },
+          idClock,
+        );
+
+        return stored.match(
+          (metadata) => c.json(metadata),
+          (failure) => {
+            console.error("PDF open error:", failure.cause);
+            return c.json(
+              {
+                error: {
+                  code: "PDF_EXTRACT_FAILED" satisfies ErrorCode,
+                  message: "Failed to process PDF",
+                },
               },
-            },
-            500,
-          );
-        }
+              500,
+            );
+          },
+        );
       })
       .get("/pdfs", async (c) => {
-        const books = await listPdfs(c.env.DB, c.env.PDF_BUCKET);
-        return c.json({ books });
+        const shelf = await listPdfs(c.env.DB, c.env.PDF_BUCKET);
+        return shelf.match(
+          (books) => c.json({ books }),
+          (failure) => storageFailureResponse(c, failure.cause),
+        );
       })
       .get("/pdf/:pdfId/thumbnail", async (c) => {
         const pdf = await drizzle(c.env.DB)
@@ -287,17 +331,12 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
         return c.json({ pageNumber: findPageNumber(text, pdf.fullText, pdf.pageCount) ?? null });
       })
       .get("/pdf/:pdfId", async (c) => {
-        const pdfId = c.req.param("pdfId");
-        const result = await getPdf(c.env.DB, c.env.PDF_BUCKET, pdfId);
+        const book = await getPdf(c.env.DB, c.env.PDF_BUCKET, c.req.param("pdfId"));
 
-        if (!result) {
-          return c.json(
-            { error: { code: "PDF_NOT_FOUND" satisfies ErrorCode, message: "PDF not found" } },
-            404,
-          );
-        }
-
-        return c.json(result);
+        return book.match(
+          (found) => c.json(found),
+          (failure) => serviceFailureResponse(c, failure, PDF_NOT_FOUND),
+        );
       })
       .post("/pdf/:pdfId/selections", validate("json", createSelectionRequestSchema), async (c) => {
         const pdfId = c.req.param("pdfId");
@@ -482,18 +521,35 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
                   // Save the answer before telling the client about it, so a client
                   // that already left cannot stop the save
                   const assistantMsgId = idClock.newId();
-                  await d1Db
-                    .insert(chatMessages)
-                    .values({
-                      id: assistantMsgId,
-                      selectionId: selId,
-                      role: "assistant",
-                      content: fullResponse,
-                      citations: JSON.stringify(citations),
-                      createdAt: idClock.now(),
-                    })
-                    .run()
-                    .catch((err: Error) => console.error("Failed to save assistant message:", err));
+                  const saved = await ResultAsync.fromPromise(
+                    d1Db
+                      .insert(chatMessages)
+                      .values({
+                        id: assistantMsgId,
+                        selectionId: selId,
+                        role: "assistant",
+                        content: fullResponse,
+                        citations: JSON.stringify(citations),
+                        createdAt: idClock.now(),
+                      })
+                      .run(),
+                    storageFailure,
+                  );
+
+                  // An answer that was not stored is gone the moment the chat is
+                  // reopened. Sending `done` for it would show the reader a
+                  // finished conversation that empties itself on the next visit.
+                  if (saved.isErr()) {
+                    console.error("Failed to save assistant message:", saved.error.cause);
+                    send(
+                      `event: error\ndata: ${JSON.stringify({
+                        code: "CHAT_SAVE_FAILED" satisfies ErrorCode,
+                        message: "The answer could not be saved",
+                      } satisfies ErrorPayload)}\n\n`,
+                    );
+                    closeStream();
+                    return;
+                  }
 
                   for (const citation of citations) {
                     send(`event: citation\ndata: ${JSON.stringify(citation)}\n\n`);
@@ -555,15 +611,12 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
         },
       )
       .delete("/pdf/:pdfId", async (c) => {
-        const deleted = await deletePdf(c.env.DB, c.env.PDF_BUCKET, c.req.param("pdfId"));
-        if (!deleted) {
-          return c.json(
-            { error: { code: "PDF_NOT_FOUND" satisfies ErrorCode, message: "PDF not found" } },
-            404,
-          );
-        }
+        const removal = await deletePdf(c.env.DB, c.env.PDF_BUCKET, c.req.param("pdfId"));
 
-        return c.json({ deleted: true });
+        return removal.match(
+          () => c.json({ deleted: true }),
+          (failure) => serviceFailureResponse(c, failure, PDF_NOT_FOUND),
+        );
       })
       .delete("/pdf/:pdfId/selections/:selId", async (c) => {
         const selId = c.req.param("selId");

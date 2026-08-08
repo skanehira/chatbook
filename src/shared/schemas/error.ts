@@ -14,6 +14,9 @@ export const ERROR_CODES = [
   "CONFIG_ERROR",
   "AI_API_ERROR",
   "AI_STREAM_ERROR",
+  "CHAT_SAVE_FAILED",
+  "ROUTE_NOT_FOUND",
+  "INTERNAL_ERROR",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

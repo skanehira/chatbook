@@ -1,9 +1,11 @@
 import { ulid } from "ulid";
 import { drizzle } from "drizzle-orm/d1";
 import { desc, eq } from "drizzle-orm";
+import { ResultAsync, err, ok } from "neverthrow";
 import { pdfs, selections } from "../db/schema";
 import type { BookSummary, PdfMetadata } from "../../shared/schemas/book";
 import { positionDataSchema, type PositionData } from "../../shared/schemas/selection";
+import { notFound, storageFailure, type ServiceError, type StorageError } from "./serviceError";
 
 /**
  * R2 object key for a PDF, derived from its content hash.
@@ -51,7 +53,14 @@ export type { BookSummary } from "../../shared/schemas/book";
 /**
  * List every stored book, most recently opened first, for the shelf view.
  */
-export async function listPdfs(db: D1Database, bucket: R2Bucket): Promise<BookSummary[]> {
+export function listPdfs(
+  db: D1Database,
+  bucket: R2Bucket,
+): ResultAsync<BookSummary[], StorageError> {
+  return ResultAsync.fromPromise(readShelf(db, bucket), storageFailure);
+}
+
+async function readShelf(db: D1Database, bucket: R2Bucket): Promise<BookSummary[]> {
   const rows = await drizzle(db)
     .select({
       id: pdfs.id,
@@ -79,11 +88,20 @@ export async function listPdfs(db: D1Database, bucket: R2Bucket): Promise<BookSu
  * The PDF binary is stored in R2; D1 keeps the metadata and the object key.
  * Returns the existing record if a file with the same hash already exists.
  */
-export async function openPdf(
+export function openPdf(
   db: D1Database,
   bucket: R2Bucket,
   input: OpenPdfInput,
   idClock: IdClock = systemIdClock,
+): ResultAsync<PdfMetadata, StorageError> {
+  return ResultAsync.fromPromise(storePdf(db, bucket, input, idClock), storageFailure);
+}
+
+async function storePdf(
+  db: D1Database,
+  bucket: R2Bucket,
+  input: OpenPdfInput,
+  idClock: IdClock,
 ): Promise<PdfMetadata> {
   const { fileName, fileHash, fullText, pageCount, arrayBuffer, thumbnail } = input;
   const d1Db = drizzle(db);
@@ -142,9 +160,23 @@ export async function openPdf(
  * D1 is cleared first — if the R2 cleanup then fails, only an unreachable
  * object is left behind, whereas the reverse order would leave a book on the
  * shelf whose binary is gone.
- * Returns false when no such book exists.
+ *
+ * "No such book" and "the store refused" both come back as failures now: the
+ * old boolean made the first look like a result and left the second to escape
+ * as an exception, so the two ends of the same operation were reported in two
+ * different ways.
  */
-export async function deletePdf(db: D1Database, bucket: R2Bucket, pdfId: string): Promise<boolean> {
+export function deletePdf(
+  db: D1Database,
+  bucket: R2Bucket,
+  pdfId: string,
+): ResultAsync<void, ServiceError> {
+  return ResultAsync.fromPromise(removePdf(db, bucket, pdfId), storageFailure).andThen((deleted) =>
+    deleted ? ok(undefined) : err(notFound()),
+  );
+}
+
+async function removePdf(db: D1Database, bucket: R2Bucket, pdfId: string): Promise<boolean> {
   const d1Db = drizzle(db);
   const pdf = await d1Db.select().from(pdfs).where(eq(pdfs.id, pdfId)).get();
   if (!pdf) return false;
@@ -177,7 +209,13 @@ function readPositionData(stored: string): PositionData {
 /**
  * Get a PDF record by id, including its selections.
  */
-export async function getPdf(db: D1Database, bucket: R2Bucket, pdfId: string) {
+export function getPdf(db: D1Database, bucket: R2Bucket, pdfId: string) {
+  return ResultAsync.fromPromise(readPdf(db, bucket, pdfId), storageFailure).andThen((book) =>
+    book ? ok(book) : err(notFound()),
+  );
+}
+
+async function readPdf(db: D1Database, bucket: R2Bucket, pdfId: string) {
   const d1Db = drizzle(db);
   const pdf = await d1Db.select().from(pdfs).where(eq(pdfs.id, pdfId)).get();
   if (!pdf) return null;

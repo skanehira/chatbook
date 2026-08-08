@@ -272,6 +272,64 @@ describe("POST /api/pdf/:pdfId/selections/:selId/chats", () => {
     });
   });
 
+  it("tells the client the answer was lost when it cannot be saved", async () => {
+    const { pdfId, selectionId } = await createSelection("chat-save-failure");
+    const encoder = new TextEncoder();
+
+    // Hold the tail of the answer back so the highlight can be deleted while
+    // the answer is still streaming. The row the answer is saved as points at
+    // that highlight, so the save is refused once it is gone.
+    let deliverRest!: () => void;
+    const rest = new Promise<void>((resolve) => {
+      deliverRest = resolve;
+    });
+
+    server.use(
+      http.post("https://api.deepseek.com/chat/completions", () => {
+        const body = new ReadableStream({
+          async start(controller) {
+            controller.enqueue(encoder.encode(chatCompletionsToken("Durable ")));
+            await rest;
+            controller.enqueue(encoder.encode(chatCompletionsToken("Objects")));
+            controller.enqueue(encoder.encode(chatCompletionsTail()));
+            controller.close();
+          },
+        });
+        return new HttpResponse(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }),
+    );
+
+    const response = await postChat(pdfId, selectionId, {
+      content: "What are Durable Objects?",
+      useWebSearch: false,
+    });
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let received = decoder.decode((await reader.read()).value);
+
+    await SELF.fetch(`https://example.com/api/pdf/${pdfId}/selections/${selectionId}`, {
+      method: "DELETE",
+    });
+    deliverRest();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += decoder.decode(value, { stream: true });
+    }
+
+    const events = parseSse(received);
+    expect(events.map((e) => e.event)).toStrictEqual(["token", "token", "error"]);
+    expect(events[2].data).toStrictEqual({
+      code: "CHAT_SAVE_FAILED",
+      message: "The answer could not be saved",
+    });
+  });
+
   it("reports an upstream failure to the client as an error event", async () => {
     const { pdfId, selectionId } = await createSelection("chat-upstream-error");
 
