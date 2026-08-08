@@ -111,9 +111,10 @@ export async function streamResponseWithWebSearch(
   userMessage: string,
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
+  fetchFn: typeof fetch = fetch,
 ): Promise<void> {
   try {
-    const response = await fetch("https://api.deepseek.com/responses", {
+    const response = await fetchFn("https://api.deepseek.com/responses", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
