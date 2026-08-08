@@ -196,15 +196,21 @@ DOM 非依存の純粋関数として実装。`gg` や `C-c t` の2ストロー�
 
 ランナーが3つあり、それぞれ守備範囲が違う:
 
-| ランナー              | 設定                       | 対象                                      |
-| --------------------- | -------------------------- | ----------------------------------------- |
-| vitest (jsdom)        | `vite.config.ts`           | `src/front/**` の純粋関数・コンポーネント |
-| vitest (workers pool) | `vitest.workers.config.ts` | `test/worker/**` の API                   |
-| Playwright            | `e2e/playwright.config.ts` | ブラウザ実操作                            |
+| ランナー              | 設定                       | 対象                                                                                |
+| --------------------- | -------------------------- | ----------------------------------------------------------------------------------- |
+| vitest (jsdom)        | `vite.config.ts`           | `src/**` の `*.test.ts(x)`（`src/front/**` と、workerd を要さない `src/server/**`） |
+| vitest (workers pool) | `vitest.workers.config.ts` | `test/worker/**` の API（`SELF.fetch` / D1 / R2 を使うもの）                        |
+| Playwright            | `e2e/playwright.config.ts` | ブラウザ実操作                                                                      |
 
 jsdom テストと Workers pool テストは同一プロセスで共存できないため設定が分かれている
 （`vite.config.ts` は `process.env.VITEST` のとき `cloudflare()` を無効化する）。
-`vite.config.ts` の `exclude` に `e2e/**` を入れてあり、Playwright の spec を vitest が拾わないようにしている。
+
+**jsdom 側は `include` を書かず `exclude` だけで拾っている**（`node_modules` / `dist` /
+`test/worker/**` / `e2e/**` を除外）。そのため実装とコロケーションした
+`src/server/services/*.test.ts` も自動的に jsdom で走る。バインディングを触らない純粋な
+サーバロジック（`chatService` の引用パース、`deepseekService` の SSE パースを注入 fetch で
+叩くもの）はこちらで書き、workerd の実物が要るものだけ `test/worker/**` に置く。
+**`include` を足して絞ると、これらが無言で走らなくなる**ので注意。
 
 ### E2E の前提
 
