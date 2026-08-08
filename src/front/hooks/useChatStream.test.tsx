@@ -130,7 +130,7 @@ describe("useChatStream", () => {
       await sent;
     });
 
-    expect(store.get(chatMessagesAtom)).toEqual([
+    expect(store.get(chatMessagesAtom)).toStrictEqual([
       {
         id: `temp-${fixedNow.getTime()}`,
         role: "user",
