@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll } from "vite-plus/test";
 import { env, applyD1Migrations, SELF } from "cloudflare:test";
 import { MINIMAL_PDF_BYTES } from "./fixtures/minimalPdf";
-import { pdfObjectKey, thumbnailObjectKey } from "../../src/server/services/pdfService";
+import {
+  openPdf,
+  pdfObjectKey,
+  thumbnailObjectKey,
+  type IdClock,
+} from "../../src/server/services/pdfService";
 
 beforeAll(async () => {
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
@@ -447,6 +452,97 @@ describe("GET /api/pdf/:pdfId/locate", () => {
     expect(response.status).toBe(404);
     expect(await response.json()).toStrictEqual({
       error: { code: "PDF_NOT_FOUND", message: "PDF not found" },
+    });
+  });
+});
+
+/** An IdClock that always hands out the same id and timestamp. */
+function fixedIdClock(id: string, now: string): IdClock {
+  return { newId: () => id, now: () => now };
+}
+
+/** The stored book row, so the ids and timestamps a write produced are visible. */
+async function storedBookRow(pdfId: string): Promise<Record<string, unknown> | null> {
+  return await env.DB.prepare(
+    "SELECT id, file_path, file_name, file_hash, full_text, page_count, created_at, updated_at FROM pdfs WHERE id = ?",
+  )
+    .bind(pdfId)
+    .first();
+}
+
+describe("openPdf with an injected IdClock", () => {
+  it("stores a new book under the id and timestamps the clock hands out", async () => {
+    const fileHash = "hash-idclock-new";
+
+    const metadata = await openPdf(
+      env.DB,
+      env.PDF_BUCKET,
+      {
+        fileName: "injected.pdf",
+        fileHash,
+        fullText: "本文",
+        pageCount: 3,
+        arrayBuffer: uniquePdfBytes("idclock-new").buffer as ArrayBuffer,
+      },
+      fixedIdClock("book-idclock-new", "2026-01-02T03:04:05.678Z"),
+    );
+
+    expect(metadata).toStrictEqual({
+      id: "book-idclock-new",
+      fileName: "injected.pdf",
+      pageCount: 3,
+      fullText: "本文",
+    });
+    expect(await storedBookRow("book-idclock-new")).toStrictEqual({
+      id: "book-idclock-new",
+      file_path: `pdfs/${fileHash}.pdf`,
+      file_name: "injected.pdf",
+      file_hash: fileHash,
+      full_text: "本文",
+      page_count: 3,
+      created_at: "2026-01-02T03:04:05.678Z",
+      updated_at: "2026-01-02T03:04:05.678Z",
+    });
+  });
+
+  it("keeps the first id and moves only updated_at when the same file is re-opened", async () => {
+    const fileHash = "hash-idclock-reopen";
+    const input = {
+      fileName: "first.pdf",
+      fileHash,
+      fullText: "初回の本文",
+      pageCount: 3,
+      arrayBuffer: uniquePdfBytes("idclock-reopen").buffer as ArrayBuffer,
+    };
+    await openPdf(
+      env.DB,
+      env.PDF_BUCKET,
+      input,
+      fixedIdClock("book-idclock-reopen", "2026-01-02T03:04:05.678Z"),
+    );
+
+    const metadata = await openPdf(
+      env.DB,
+      env.PDF_BUCKET,
+      { ...input, fileName: "second.pdf", fullText: "再抽出した本文", pageCount: 4 },
+      fixedIdClock("book-idclock-ignored", "2026-03-04T05:06:07.891Z"),
+    );
+
+    expect(metadata).toStrictEqual({
+      id: "book-idclock-reopen",
+      fileName: "second.pdf",
+      pageCount: 4,
+      fullText: "再抽出した本文",
+    });
+    expect(await storedBookRow("book-idclock-reopen")).toStrictEqual({
+      id: "book-idclock-reopen",
+      file_path: `pdfs/${fileHash}.pdf`,
+      file_name: "second.pdf",
+      file_hash: fileHash,
+      full_text: "再抽出した本文",
+      page_count: 4,
+      created_at: "2026-01-02T03:04:05.678Z",
+      updated_at: "2026-03-04T05:06:07.891Z",
     });
   });
 });
