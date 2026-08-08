@@ -55,9 +55,16 @@ export function PdfViewer({ book, bookError, onSelectionClick }: PdfViewerProps)
   const [outlineOpen, setOutlineOpen] = useAtom(outlineOpenAtom);
 
   const { highlights, addHighlight } = useHighlights(book?.id);
-  const { pdfDocument } = usePdfDocument(book);
-  const { outline } = usePdfOutline(pdfDocument);
+  const { pdfDocument, error: documentError } = usePdfDocument(book);
+  const { outline, error: outlineError } = usePdfOutline(pdfDocument);
   const { askAboutSelection, saveError } = useAskAboutSelection(addHighlight);
+  // Kept with the page it happened on, so turning away from a page that could
+  // not be drawn takes its message with it.
+  const [renderError, setRenderError] = useState<{ page: number; message: string } | null>(null);
+  const reportRenderError = useCallback(
+    (message: string) => setRenderError({ page: currentPage, message }),
+    [currentPage],
+  );
 
   const pageCount = book?.pageCount ?? 1;
   const handleShortcut = useCallback(
@@ -245,6 +252,14 @@ export function PdfViewer({ book, bookError, onSelectionClick }: PdfViewerProps)
         </div>
       ) : null}
 
+      {documentError !== null ? (
+        <div className="flex items-center justify-center flex-1">
+          <p role="alert" className="text-red-500 text-lg">
+            {documentError}
+          </p>
+        </div>
+      ) : null}
+
       {!book && !bookError ? (
         <div className="flex items-center justify-center flex-1">
           <div className="text-gray-500 text-lg">PDFを読み込み中...</div>
@@ -257,10 +272,21 @@ export function PdfViewer({ book, bookError, onSelectionClick }: PdfViewerProps)
         </p>
       ) : null}
 
+      {renderError?.page === currentPage ? (
+        <p role="alert" className="m-2 rounded-md bg-red-50 p-3 text-sm text-red-600">
+          このページを表示できません: {renderError.message}
+        </p>
+      ) : null}
+
       {pdfDocument && (
         <div className="flex min-h-0 flex-1">
           {outlineOpen && (
-            <PdfOutline outline={outline} currentPage={currentPage} onJump={setCurrentPage} />
+            <PdfOutline
+              outline={outline}
+              error={outlineError}
+              currentPage={currentPage}
+              onJump={setCurrentPage}
+            />
           )}
 
           <div ref={containerRef} className="flex-1 overflow-auto p-4">
@@ -270,6 +296,7 @@ export function PdfViewer({ book, bookError, onSelectionClick }: PdfViewerProps)
                   pdfDoc={pdfDocument}
                   pageNumber={currentPage}
                   containerWidth={contentWidth}
+                  onError={reportRenderError}
                 />
               )}
               <HighlightOverlay

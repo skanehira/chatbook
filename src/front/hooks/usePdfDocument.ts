@@ -4,7 +4,7 @@ import useSWRMutation from "swr/mutation";
 import type * as pdfjsTypes from "pdfjs-dist";
 import { pdfjsLib, PDFJS_ASSET_OPTIONS } from "../lib/pdfjsConfig";
 import { renderCoverThumbnail } from "../lib/pdfLoader";
-import { fetcher } from "../lib/fetcher";
+import { fetcher, readRefusal } from "../lib/fetcher";
 import { thumbnailStoredSchema, type BookDetail } from "../../shared/schemas/book";
 
 /** Where a book's cover is written, and the key the write is tracked under. */
@@ -50,9 +50,14 @@ export async function storeCoverIfMissing(
 /**
  * Load the pdfjs-dist PDFDocumentProxy for the given book by fetching the
  * stored PDF binary from the API.
+ *
+ * A book whose binary is gone, or whose bytes pdf.js will not open, used to
+ * leave the viewer with no document and nothing said about it — the reader saw
+ * a book that opened to a blank page. `error` is that reason, worded for them.
  */
 export function usePdfDocument(book: BookDetail | undefined, fetchFn: typeof fetch = fetch) {
   const [pdfDocument, setPdfDocument] = useState<pdfjsTypes.PDFDocumentProxy | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const loadingRef = useRef<string | null>(null);
 
   // Storing a cover is a write, so it goes through a mutation rather than an
@@ -83,13 +88,16 @@ export function usePdfDocument(book: BookDetail | undefined, fetchFn: typeof fet
 
     const pdfId = book.id;
     const hasThumbnail = book.hasThumbnail;
+    const url = `/api/pdf/${pdfId}/file`;
     let cancelled = false;
+    setError(null);
 
     async function loadPdf() {
       try {
-        const response = await fetchFn(`/api/pdf/${pdfId}/file`);
+        const response = await fetchFn(url);
         if (!response.ok) {
-          console.warn("PDF file not found on server, rendering unavailable");
+          const refusal = await readRefusal(url, response);
+          if (!cancelled) setError(`PDFを表示できません: ${refusal.message}`);
           return;
         }
         const arrayBuffer = await response.arrayBuffer();
@@ -103,8 +111,15 @@ export function usePdfDocument(book: BookDetail | undefined, fetchFn: typeof fet
 
         setPdfDocument(doc);
         void backfillCover({ pdfId, doc, hasThumbnail });
-      } catch (err) {
-        console.error("Failed to load PDF for rendering:", err);
+      } catch (cause) {
+        // Everything from here on is pdf.js refusing the bytes or the request
+        // never arriving; both leave the reader with nothing to look at.
+        console.error("Failed to load PDF for rendering:", cause);
+        if (!cancelled) {
+          setError(
+            `PDFを表示できません: ${cause instanceof Error ? cause.message : String(cause)}`,
+          );
+        }
       }
     }
 
@@ -116,5 +131,5 @@ export function usePdfDocument(book: BookDetail | undefined, fetchFn: typeof fet
     };
   }, [book?.id]);
 
-  return { pdfDocument };
+  return { pdfDocument, error };
 }

@@ -145,9 +145,11 @@ describe("AppPage", () => {
 
     await userEvent.click(await screen.findByText(A_PASSAGE));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      /^チャット履歴を読み込めませんでした: Selection not found$/,
-    );
+    // The viewer reports the missing binary of the same book at the same time,
+    // so this looks for the chat panel's own words rather than any alert.
+    expect(
+      await screen.findByText("チャット履歴を読み込めませんでした: Selection not found"),
+    ).toBeInTheDocument();
   });
 
   it("says what went wrong when the book cannot be read", async () => {

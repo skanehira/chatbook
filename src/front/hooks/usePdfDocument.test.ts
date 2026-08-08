@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vite-plus/test";
+import { renderHook, waitFor } from "@testing-library/react";
 import type * as pdfjsTypes from "pdfjs-dist";
-import { storeCoverIfMissing } from "./usePdfDocument";
+import { storeCoverIfMissing, usePdfDocument } from "./usePdfDocument";
+import type { BookDetail } from "../../shared/schemas/book";
 
 const PDF_ID = "01JBOOK";
 
@@ -59,5 +61,44 @@ describe("storeCoverIfMissing", () => {
     await storeCoverIfMissing(PDF_ID, UNRENDERED_DOC, HAS_NO_COVER, fetchFn, async () => null);
 
     expect(calls).toStrictEqual([]);
+  });
+});
+
+const BOOK: BookDetail = {
+  id: PDF_ID,
+  fileName: "Cloudflare Workers.pdf",
+  pageCount: 209,
+  hasThumbnail: true,
+  selections: [],
+};
+
+describe("usePdfDocument", () => {
+  it("reports the server's reason when the book's file cannot be fetched", async () => {
+    // The viewer used to be left with no document and no reason for it, which
+    // reads on screen as a book that opened to a blank page.
+    const missing: typeof fetch = () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: { code: "PDF_FILE_MISSING", message: "PDF binary not found in storage" },
+          }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    const { result } = renderHook(() => usePdfDocument(BOOK, missing));
+
+    await waitFor(() =>
+      expect(result.current.error).toBe("PDFを表示できません: PDF binary not found in storage"),
+    );
+    expect(result.current.pdfDocument).toBeNull();
+  });
+
+  it("reports a request for the book's file that never reached the server", async () => {
+    const offline: typeof fetch = () => Promise.reject(new TypeError("Failed to fetch"));
+
+    const { result } = renderHook(() => usePdfDocument(BOOK, offline));
+
+    await waitFor(() => expect(result.current.error).toBe("PDFを表示できません: Failed to fetch"));
   });
 });

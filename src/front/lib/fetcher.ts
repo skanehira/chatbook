@@ -88,6 +88,25 @@ const NETWORK_ERROR_CODE = "NETWORK_ERROR";
 const ABORTED_CODE = "ABORTED";
 
 /**
+ * The refusal the server described, or the status when it described nothing.
+ *
+ * For the callers that read a response themselves rather than through
+ * `fetcher` — the chat stream and the PDF binary, neither of which is JSON —
+ * so that a refusal reaches them in the same words it reaches everyone else.
+ */
+export async function readRefusal(url: string, response: Response): Promise<ApiError> {
+  const body: unknown = await response.json().catch(() => null);
+  const envelope = errorEnvelopeSchema.safeParse(body);
+  return envelope.success
+    ? new ApiError(envelope.data.error.message, envelope.data.error.code, response.status)
+    : new ApiError(
+        `request to ${url} failed with status ${response.status}`,
+        UNKNOWN_ERROR_CODE,
+        response.status,
+      );
+}
+
+/**
  * A rejection from `fetch` itself, given the shape every other failure has.
  *
  * Exported for the one caller that does not go through `fetcher` at all: the

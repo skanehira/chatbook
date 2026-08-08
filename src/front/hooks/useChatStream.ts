@@ -10,10 +10,9 @@ import {
   abortChatStreamAtom,
 } from "../atoms/chatAtom";
 import { createSseParser } from "../lib/sseParser";
-import { ApiError, networkFailure } from "../lib/fetcher";
+import { ApiError, networkFailure, readRefusal } from "../lib/fetcher";
 import type { ChatMessage } from "../../shared/schemas/chat";
 import type { Citation } from "../../shared/schemas/citation";
-import { errorEnvelopeSchema } from "../../shared/schemas/error";
 import { chatSseEventSchema } from "../../shared/schemas/sse";
 
 interface ChatStreamOptions {
@@ -30,19 +29,6 @@ export const chatFailureMessage = (failure: ApiError) =>
  * renders and `sendMessage` is not rebuilt on every render.
  */
 const systemNow = () => new Date();
-
-/** The refusal the server described, or the status when it described nothing. */
-async function refusal(url: string, response: Response): Promise<ApiError> {
-  const body: unknown = await response.json().catch(() => null);
-  const envelope = errorEnvelopeSchema.safeParse(body);
-  return envelope.success
-    ? new ApiError(envelope.data.error.message, envelope.data.error.code, response.status)
-    : new ApiError(
-        `request to ${url} failed with status ${response.status}`,
-        "UNKNOWN",
-        response.status,
-      );
-}
 
 /**
  * Send a question and render the answer as it streams in.
@@ -101,7 +87,7 @@ export function useChatStream(fetchFn: typeof fetch = fetch, now: () => Date = s
             signal: controller.signal,
           });
 
-          if (!response.ok) throw await refusal(url, response);
+          if (!response.ok) throw await readRefusal(url, response);
 
           const reader = response.body?.getReader();
           if (!reader) {

@@ -11,9 +11,14 @@ interface PdfPageProps {
   pageNumber: number;
   /** Width to fit the page into, so the viewer can be resized freely. */
   containerWidth: number;
+  /**
+   * Called with the reason this page could not be drawn. A cancelled render is
+   * not one: it is the normal path when the page or the width changes.
+   */
+  onError?: (message: string) => void;
 }
 
-export function PdfPage({ pdfDoc, pageNumber, containerWidth }: PdfPageProps) {
+export function PdfPage({ pdfDoc, pageNumber, containerWidth, onError }: PdfPageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
   const renderTaskRef = useRef<RenderTask | null>(null);
@@ -107,8 +112,11 @@ export function PdfPage({ pdfDoc, pageNumber, containerWidth }: PdfPageProps) {
       setViewport({ width: viewport.width, height: viewport.height, baseWidth });
     }
 
-    renderPage().catch((err) => {
+    renderPage().catch((err: unknown) => {
       console.error("Failed to render page:", err);
+      // A cancelled render never gets here — renderPage returns on it — so
+      // anything that does is a page the reader will not see drawn.
+      if (!cancelled) onError?.(err instanceof Error ? err.message : String(err));
     });
 
     return () => {
@@ -117,7 +125,7 @@ export function PdfPage({ pdfDoc, pageNumber, containerWidth }: PdfPageProps) {
       releaseSelectionGuard.current?.();
       releaseSelectionGuard.current = null;
     };
-  }, [pdfDoc, pageNumber, containerWidth, setViewport]);
+  }, [pdfDoc, pageNumber, containerWidth, setViewport, onError]);
 
   return (
     <div className="relative mb-4 shadow-lg mx-auto" style={{ width: "fit-content" }}>

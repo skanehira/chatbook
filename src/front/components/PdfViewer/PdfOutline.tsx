@@ -2,6 +2,8 @@ import type { OutlineEntry } from "../../hooks/usePdfOutline";
 
 interface PdfOutlineProps {
   outline: OutlineEntry[] | null;
+  /** Why the bookmarks could not be read, if they could not. */
+  error: string | null;
   currentPage: number;
   onJump: (pageNumber: number) => void;
 }
@@ -72,7 +74,7 @@ function OutlineItem({
   );
 }
 
-export function PdfOutline({ outline, currentPage, onJump }: PdfOutlineProps) {
+export function PdfOutline({ outline, error, currentPage, onJump }: PdfOutlineProps) {
   const activeTitle = outline ? findActiveTitle(outline, currentPage) : null;
 
   return (
@@ -84,7 +86,15 @@ export function PdfOutline({ outline, currentPage, onJump }: PdfOutlineProps) {
         目次
       </h2>
 
-      {outline === null && <p className="p-3 text-xs text-gray-400">読み込み中...</p>}
+      {error !== null && (
+        <p role="alert" className="p-3 text-xs text-red-600">
+          目次を読み込めませんでした: {error}
+        </p>
+      )}
+
+      {outline === null && error === null && (
+        <p className="p-3 text-xs text-gray-400">読み込み中...</p>
+      )}
 
       {outline?.length === 0 && (
         <p className="p-3 text-xs text-gray-400">この本には目次がありません</p>
