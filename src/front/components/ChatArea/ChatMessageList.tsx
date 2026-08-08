@@ -26,10 +26,8 @@ export function ChatMessageList({ messages, streamingContent, isStreaming }: Cha
       {isStreaming && streamingContent && (
         <ChatMessageBubble
           message={{
-            id: "streaming",
             role: "assistant",
             content: streamingContent,
-            createdAt: new Date().toISOString(),
           }}
         />
       )}

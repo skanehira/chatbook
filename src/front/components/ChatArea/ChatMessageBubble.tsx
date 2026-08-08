@@ -6,7 +6,8 @@ import { CitationBadge } from "./CitationBadge";
 import { stripSources } from "../../lib/stripSources";
 
 interface ChatMessageBubbleProps {
-  message: ChatMessage;
+  /** Only what the bubble renders; a streaming answer has no id or timestamp yet. */
+  message: Pick<ChatMessage, "role" | "content" | "citations">;
 }
 
 /**
