@@ -8,11 +8,13 @@ import {
   activeSelectionAtom,
   chatAbortControllerAtom,
   isStreamingAtom,
-  selectionsAtom,
   type ActiveSelection,
 } from "../../atoms/chatAtom";
 import type { SelectionHighlight } from "../../../shared/schemas/selection";
+import type { BookDetail } from "../../../shared/schemas/book";
 import { pdfDocAtom } from "../../atoms/pdfAtom";
+import { bookKey } from "../../hooks/useHighlights";
+import { SwrTestCache } from "../../../test/swrTestCache";
 
 const SELECTED_TEXT = "エッジはサーバーレス実行基盤で、実行単位をまたいでメモリを共有できません。";
 const OTHER_TEXT = "Durable Objects は単一のインスタンスに処理を集約します。";
@@ -36,18 +38,29 @@ const HIGHLIGHTS: SelectionHighlight[] = [
   },
 ];
 
+const BOOK: BookDetail = {
+  id: "p1",
+  fileName: "Cloudflare Workers.pdf",
+  pageCount: 209,
+  hasThumbnail: true,
+  selections: HIGHLIGHTS,
+};
+
 function renderChat(options: { activeSelection?: ActiveSelection | null } = {}) {
   const { activeSelection = { id: "s1", selectedText: SELECTED_TEXT, pageNumber: 42 } } = options;
   const store = createStore();
-  store.set(pdfDocAtom, { id: "p1", fileName: "Cloudflare Workers.pdf", pageCount: 209 });
+  store.set(pdfDocAtom, { id: BOOK.id, fileName: BOOK.fileName, pageCount: BOOK.pageCount });
   store.set(activeSelectionAtom, activeSelection);
-  store.set(selectionsAtom, HIGHLIGHTS);
 
   const opened: ActiveSelection[] = [];
   render(
-    <Provider store={store}>
-      <ChatArea onSelectionClick={(selection) => opened.push(selection)} />
-    </Provider>,
+    // The highlights the panel lists come from the book's cache entry, the same
+    // one the viewer draws from.
+    <SwrTestCache seed={{ [bookKey(BOOK.id)]: BOOK }}>
+      <Provider store={store}>
+        <ChatArea onSelectionClick={(selection) => opened.push(selection)} />
+      </Provider>
+    </SwrTestCache>,
   );
   return { store, opened };
 }

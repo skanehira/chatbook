@@ -1,4 +1,4 @@
-// oxlint-disable-next-line no-restricted-imports -- 本の切り替えに合わせたハイライト読み直し、表示幅の ResizeObserver 購読、ページ遷移時のスクロール位置リセットに必要
+// oxlint-disable-next-line no-restricted-imports -- 表示幅の ResizeObserver 購読、ページ遷移時のスクロール位置リセット、document への selectionchange 購読に必要
 import { useRef, useState, useCallback, useEffect } from "react";
 import { useAtomValue, useAtom } from "jotai";
 import {
@@ -12,11 +12,10 @@ import {
 import {
   activeSelectionAtom,
   chatMessagesAtom,
-  selectionsAtom,
   useWebSearchAtom,
   type ActiveSelection,
 } from "../../atoms/chatAtom";
-import type { SelectionRect, SelectionHighlight } from "../../../shared/schemas/selection";
+import type { SelectionRect } from "../../../shared/schemas/selection";
 import { PdfPage } from "./PdfPage";
 import { PdfOutline } from "./PdfOutline";
 import { SelectionPopover } from "./SelectionPopover";
@@ -30,35 +29,14 @@ import { useChatStream } from "../../hooks/useChatStream";
 import { useHighlights } from "../../hooks/useHighlights";
 import type { ViewerAction } from "../../lib/keybindings";
 import { fetcher } from "../../lib/fetcher";
-import { bookDetailSchema } from "../../../shared/schemas/book";
 import { createdSelectionSchema } from "../../../shared/schemas/selection";
 
 interface PdfViewerProps {
   onSelectionClick: (selection: ActiveSelection) => void;
 }
 
-const HIGHLIGHT_COLORS = [
-  "#FFEB3B",
-  "#FF9800",
-  "#4CAF50",
-  "#2196F3",
-  "#9C27B0",
-  "#F44336",
-  "#00BCD4",
-  "#FF5722",
-];
-
 /** How far j/k move the page, in pixels. A few lines, like vim's line scroll. */
 const SCROLL_STEP = 80;
-
-/** Books saved before highlights carried a colour fall back to the palette. */
-async function loadSelections(pdfId: string): Promise<SelectionHighlight[]> {
-  const data = await fetcher(`/api/pdf/${pdfId}`, bookDetailSchema);
-  return data.selections.map((selection, i) => ({
-    ...selection,
-    color: selection.color || HIGHLIGHT_COLORS[i % HIGHLIGHT_COLORS.length],
-  }));
-}
 
 export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
   const pdfDoc = useAtomValue(pdfDocAtom);
@@ -84,13 +62,12 @@ export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
     };
   } | null>(null);
 
-  const [highlights, setHighlights] = useAtom(selectionsAtom);
   const [contentWidth, setContentWidth] = useState(0);
   const [liveSelection, setLiveSelection] = useState<PageSelection | null>(null);
 
   const [outlineOpen, setOutlineOpen] = useAtom(outlineOpenAtom);
 
-  useHighlights(pdfDoc, loadSelections);
+  const { highlights, addHighlight } = useHighlights(pdfDoc?.id);
   const { pdfDocument } = usePdfDocument(pdfDoc);
   const { outline } = usePdfOutline(pdfDocument);
   const { sendMessage } = useChatStream();
@@ -247,19 +224,7 @@ export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
           },
         );
 
-        // Add highlight
-        const colorIdx = highlights.length % HIGHLIGHT_COLORS.length;
-        setHighlights((prev) => [
-          ...prev,
-          {
-            id: selection.id,
-            selectedText: selection.selectedText,
-            pageNumber: selection.pageNumber,
-            positionData: selection.positionData,
-            color: HIGHLIGHT_COLORS[colorIdx],
-            createdAt: selection.createdAt,
-          },
-        ]);
+        addHighlight(selection);
 
         // Open the chat for this selection, then stream the answer into it.
         // Going through sendMessage is what shows the question immediately and
@@ -278,7 +243,7 @@ export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
     [
       popoverState,
       pdfDoc,
-      highlights.length,
+      addHighlight,
       useWebSearch,
       setActiveSelection,
       setChatMessages,

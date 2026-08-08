@@ -5,7 +5,6 @@ import {
   isStreamingAtom,
   useWebSearchAtom,
   activeSelectionAtom,
-  selectionsAtom,
   abortChatStreamAtom,
   type ActiveSelection,
 } from "../../atoms/chatAtom";
@@ -14,6 +13,7 @@ import { ChatMessageList } from "./ChatMessageList";
 import { ChatInput } from "./ChatInput";
 import { HighlightListPanel } from "./HighlightListPanel";
 import { useChatStream } from "../../hooks/useChatStream";
+import { useHighlights } from "../../hooks/useHighlights";
 
 interface ChatAreaProps {
   onSelectionClick: (selection: ActiveSelection) => void;
@@ -22,7 +22,7 @@ interface ChatAreaProps {
 export function ChatArea({ onSelectionClick }: ChatAreaProps) {
   const pdfDoc = useAtomValue(pdfDocAtom);
   const [activeSelection, setActiveSelection] = useAtom(activeSelectionAtom);
-  const selections = useAtomValue(selectionsAtom);
+  const { highlights } = useHighlights(pdfDoc?.id);
   const messages = useAtomValue(chatMessagesAtom);
   const streamingContent = useAtomValue(streamingContentAtom);
   const isStreaming = useAtomValue(isStreamingAtom);
@@ -45,7 +45,7 @@ export function ChatArea({ onSelectionClick }: ChatAreaProps) {
   }
 
   if (!activeSelection) {
-    return <HighlightListPanel highlights={selections} onSelect={onSelectionClick} />;
+    return <HighlightListPanel highlights={highlights} onSelect={onSelectionClick} />;
   }
 
   return (

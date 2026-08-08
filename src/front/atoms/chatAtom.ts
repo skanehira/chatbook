@@ -1,6 +1,5 @@
 import { atom } from "jotai";
 import type { ChatMessage } from "../../shared/schemas/chat";
-import type { SelectionHighlight } from "../../shared/schemas/selection";
 
 /** The highlighted passage the current conversation is about. */
 export interface ActiveSelection {
@@ -10,8 +9,6 @@ export interface ActiveSelection {
 }
 
 export const activeSelectionAtom = atom<ActiveSelection | null>(null);
-// Shared so the chat panel can list the same highlights the viewer draws.
-export const selectionsAtom = atom<SelectionHighlight[]>([]);
 export const chatMessagesAtom = atom<ChatMessage[]>([]);
 export const streamingContentAtom = atom<string>("");
 export const isStreamingAtom = atom<boolean>(false);
