@@ -86,7 +86,13 @@ describe("useAskAboutSelection", () => {
       asked = await view.result.current.askAboutSelection(PDF_ID, DRAFT, QUESTION, false);
     });
 
-    expect(asked._unsafeUnwrapErr().code).toBe("PDF_NOT_FOUND");
+    const failure = asked._unsafeUnwrapErr();
+    expect([failure.message, failure.code, failure.status, failure.kind]).toStrictEqual([
+      "PDF not found",
+      "PDF_NOT_FOUND",
+      404,
+      "http",
+    ]);
     expect(view.result.current.saveError).toBe("ハイライトを保存できませんでした: PDF not found");
     expect(added).toStrictEqual([]);
     expect(calls).toStrictEqual([]);

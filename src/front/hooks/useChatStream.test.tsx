@@ -24,6 +24,11 @@ import type { Citation } from "../../shared/schemas/citation";
 
 const QUESTION = "Durable Objects とは?";
 
+/** The four facts a caller reads off a failure, in one comparable value. */
+function failureOf(error: ApiError): [string, string, number, string] {
+  return [error.message, error.code, error.status, error.kind];
+}
+
 function renderChatStream(fetchFn: typeof fetch, now?: () => Date) {
   const store = createStore();
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -86,7 +91,12 @@ describe("useChatStream", () => {
     expect(store.get(isStreamingAtom)).toBe(false);
     // Nothing was delivered, so the send failed — but the reader asked for that
     // and must not be shown an error for it.
-    expect((await sent)._unsafeUnwrapErr().code).toBe("ABORTED");
+    expect(failureOf((await sent)._unsafeUnwrapErr())).toStrictEqual([
+      "The operation was aborted.",
+      "ABORTED",
+      0,
+      "network",
+    ]);
     expect(store.get(chatErrorAtom)).toBeNull();
   });
 
@@ -167,10 +177,10 @@ describe("useChatStream", () => {
       await sent;
     });
 
-    const failure = (await sent)._unsafeUnwrapErr();
-    expect([failure.message, failure.code, failure.kind]).toStrictEqual([
+    expect(failureOf((await sent)._unsafeUnwrapErr())).toStrictEqual([
       "upstream is down",
       "AI_API_ERROR",
+      200,
       "http",
     ]);
     expect(store.get(chatErrorAtom)).toBe("回答の取得に失敗しました: upstream is down");
@@ -196,8 +206,7 @@ describe("useChatStream", () => {
       await sent;
     });
 
-    const failure = (await sent)._unsafeUnwrapErr();
-    expect([failure.message, failure.code, failure.status, failure.kind]).toStrictEqual([
+    expect(failureOf((await sent)._unsafeUnwrapErr())).toStrictEqual([
       "Invalid request body: content",
       "VALIDATION_ERROR",
       400,
@@ -218,7 +227,12 @@ describe("useChatStream", () => {
       await sent;
     });
 
-    expect((await sent)._unsafeUnwrapErr().code).toBe("NETWORK_ERROR");
+    expect(failureOf((await sent)._unsafeUnwrapErr())).toStrictEqual([
+      "request to /api/pdf/p1/selections/s1/chats could not be sent",
+      "NETWORK_ERROR",
+      0,
+      "network",
+    ]);
     expect(store.get(chatErrorAtom)).toBe(
       "回答の取得に失敗しました: request to /api/pdf/p1/selections/s1/chats could not be sent",
     );

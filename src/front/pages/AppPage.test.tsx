@@ -10,6 +10,7 @@ import type { BookDetail } from "../../shared/schemas/book";
 import type { SelectionHighlight } from "../../shared/schemas/selection";
 
 const A_PASSAGE = "エッジはサーバーレス実行基盤で、実行単位をまたいでメモリを共有できません。";
+const A_SECOND_PASSAGE = "Workers は V8 isolate の上で動きます。";
 const B_PASSAGE = "Durable Objects は単一のインスタンスに処理を集約します。";
 
 function highlight(id: string, selectedText: string): SelectionHighlight {
@@ -28,7 +29,7 @@ const BOOK_A: BookDetail = {
   fileName: "Cloudflare Workers.pdf",
   pageCount: 209,
   hasThumbnail: true,
-  selections: [highlight("a1", A_PASSAGE)],
+  selections: [highlight("a1", A_PASSAGE), highlight("a2", A_SECOND_PASSAGE)],
 };
 
 const BOOK_B: BookDetail = {
@@ -50,7 +51,11 @@ const isBookRequest = (url: string) => /^\/api\/pdf\/[^/]+$/.test(url);
  * how a test shows the reader opened the book without waiting for the server:
  * anything on screen got there from the cache, because nothing else can arrive.
  */
-function readerFetchStub({ holdTheBook = false, refuseChatHistory = false } = {}) {
+function readerFetchStub({
+  holdTheBook = false,
+  /** Id of the one highlight whose conversation the server refuses to hand over. */
+  refuseChatHistoryFor,
+}: { holdTheBook?: boolean; refuseChatHistoryFor?: string } = {}) {
   const urls: string[] = [];
   // Every caller here reaches the network through `fetcher`, which is only
   // ever handed a url string.
@@ -60,12 +65,14 @@ function readerFetchStub({ holdTheBook = false, refuseChatHistory = false } = {}
       return Promise.resolve(new Response(JSON.stringify({ pageNumber: null }), { status: 200 }));
     }
     if (url.endsWith("/chats")) {
-      const body = refuseChatHistory
+      const selectionId = url.split("/selections/")[1].split("/")[0];
+      const refused = selectionId === refuseChatHistoryFor;
+      // The whole envelope, not just `messages`: the reader checks it against
+      // chatHistorySchema and reports anything else as an unreadable response.
+      const body = refused
         ? { error: { code: "SELECTION_NOT_FOUND", message: "Selection not found" } }
-        : { messages: [] };
-      return Promise.resolve(
-        new Response(JSON.stringify(body), { status: refuseChatHistory ? 404 : 200 }),
-      );
+        : { selectionId, messages: [] };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: refused ? 404 : 200 }));
     }
     if (holdTheBook && isBookRequest(url)) {
       return new Promise<Response>(() => {});
@@ -88,7 +95,7 @@ function OpenOtherBook({ pdfId }: { pdfId: string }) {
 function renderReader(
   pdfId: string,
   seed: Record<string, unknown>,
-  options: { holdTheBook?: boolean; refuseChatHistory?: boolean } = {},
+  options: { holdTheBook?: boolean; refuseChatHistoryFor?: string } = {},
 ) {
   const { urls, fetchFn } = readerFetchStub(options);
   vi.stubGlobal("fetch", fetchFn);
@@ -145,7 +152,7 @@ describe("AppPage", () => {
   it("says the conversation could not be read instead of showing it as empty", async () => {
     // An empty conversation and one that failed to load looked identical: the
     // catch put an empty list on screen either way.
-    renderReader(BOOK_A.id, { [bookKey(BOOK_A.id)]: BOOK_A }, { refuseChatHistory: true });
+    renderReader(BOOK_A.id, { [bookKey(BOOK_A.id)]: BOOK_A }, { refuseChatHistoryFor: "a1" });
 
     await userEvent.click(await screen.findByText(A_PASSAGE));
 
@@ -154,6 +161,25 @@ describe("AppPage", () => {
     expect(
       await screen.findByText("チャット履歴を読み込めませんでした: Selection not found"),
     ).toBeInTheDocument();
+  });
+
+  it("drops the failed conversation's message when another highlight is opened", async () => {
+    // Left behind, it would sit over a conversation it says nothing about.
+    renderReader(BOOK_A.id, { [bookKey(BOOK_A.id)]: BOOK_A }, { refuseChatHistoryFor: "a1" });
+
+    await userEvent.click(await screen.findByText(A_PASSAGE));
+    expect(
+      await screen.findByText("チャット履歴を読み込めませんでした: Selection not found"),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "一覧に戻る" }));
+    await userEvent.click(screen.getByText(A_SECOND_PASSAGE));
+
+    // The second conversation is open, and the first one's failure is not on it
+    expect(await screen.findByPlaceholderText("質問を入力...")).toBeInTheDocument();
+    expect(
+      screen.queryByText("チャット履歴を読み込めませんでした: Selection not found"),
+    ).toBeNull();
   });
 
   it("says a linked passage was not found instead of quietly opening page 1", async () => {

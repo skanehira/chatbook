@@ -66,8 +66,9 @@ function renderChat(
   const opened: ActiveSelection[] = [];
   render(
     // The highlights the panel lists come from the book's cache entry, the same
-    // one the viewer draws from.
-    <SwrTestCache seed={{ [bookKey(BOOK.id)]: BOOK }}>
+    // one the viewer draws from. A book that failed to load has no such entry,
+    // so seeding one would contradict the state under test.
+    <SwrTestCache seed={book ? { [bookKey(BOOK.id)]: BOOK } : {}}>
       <Provider store={store}>
         <ChatArea
           book={book}

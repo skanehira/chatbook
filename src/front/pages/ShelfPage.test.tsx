@@ -23,7 +23,7 @@ function renderShelf(props: {
   deleteBook?: (id: string) => Promise<unknown>;
   extract?: (file: File) => Promise<ExtractedPdfData>;
 }) {
-  render(
+  return render(
     <SwrTestCache>
       <MemoryRouter>
         <Routes>
@@ -154,24 +154,10 @@ describe("ShelfPage", () => {
   it("stays on the shelf and says why when a chosen file cannot be opened", async () => {
     // Choosing a PDF that fails used to leave the shelf exactly as it was, so
     // the reader had no way to tell it from a click that did not register.
-    const { container } = render(
-      <SwrTestCache>
-        <MemoryRouter>
-          <Routes>
-            <Route
-              path="/"
-              element={
-                <ShelfPage
-                  loadBooks={TWO_BOOKS}
-                  extract={() => Promise.reject(new Error("Invalid PDF structure"))}
-                />
-              }
-            />
-            <Route path="/books/:pdfId" element={<ReaderStub />} />
-          </Routes>
-        </MemoryRouter>
-      </SwrTestCache>,
-    );
+    const { container } = renderShelf({
+      loadBooks: TWO_BOOKS,
+      extract: () => Promise.reject(new Error("Invalid PDF structure")),
+    });
 
     await userEvent.upload(
       container.querySelector<HTMLInputElement>('input[type="file"]')!,
