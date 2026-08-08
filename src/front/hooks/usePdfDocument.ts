@@ -10,15 +10,19 @@ import { renderCoverThumbnail } from "../lib/pdfLoader";
  * already holds the rendered document, so generate the cover here and store it
  * once; otherwise those books would stay blank on the shelf forever.
  */
-async function backfillCover(pdfId: string, doc: pdfjsTypes.PDFDocumentProxy) {
+async function backfillCover(
+  pdfId: string,
+  doc: pdfjsTypes.PDFDocumentProxy,
+  fetchFn: typeof fetch,
+) {
   try {
-    const book = await fetch(`/api/pdf/${pdfId}`).then((r) => (r.ok ? r.json() : null));
+    const book = await fetchFn(`/api/pdf/${pdfId}`).then((r) => (r.ok ? r.json() : null));
     if (!book || book.hasThumbnail) return;
 
     const thumbnail = await renderCoverThumbnail(doc);
     if (!thumbnail) return;
 
-    await fetch(`/api/pdf/${pdfId}/thumbnail`, {
+    await fetchFn(`/api/pdf/${pdfId}/thumbnail`, {
       method: "PUT",
       headers: { "Content-Type": "image/webp" },
       body: thumbnail,
@@ -32,7 +36,7 @@ async function backfillCover(pdfId: string, doc: pdfjsTypes.PDFDocumentProxy) {
  * Load the pdfjs-dist PDFDocumentProxy for the given book by fetching the
  * stored PDF binary from the API.
  */
-export function usePdfDocument(pdfDoc: PdfDoc | null) {
+export function usePdfDocument(pdfDoc: PdfDoc | null, fetchFn: typeof fetch = fetch) {
   const [pdfDocument, setPdfDocument] = useState<pdfjsTypes.PDFDocumentProxy | null>(null);
   const loadingRef = useRef<string | null>(null);
 
@@ -51,7 +55,7 @@ export function usePdfDocument(pdfDoc: PdfDoc | null) {
 
     async function loadPdf() {
       try {
-        const response = await fetch(`/api/pdf/${pdfId}/file`);
+        const response = await fetchFn(`/api/pdf/${pdfId}/file`);
         if (!response.ok) {
           console.warn("PDF file not found on server, rendering unavailable");
           return;
@@ -66,7 +70,7 @@ export function usePdfDocument(pdfDoc: PdfDoc | null) {
         if (cancelled) return;
 
         setPdfDocument(doc);
-        void backfillCover(pdfId, doc);
+        void backfillCover(pdfId, doc, fetchFn);
       } catch (err) {
         console.error("Failed to load PDF for rendering:", err);
       }
