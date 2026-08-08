@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vite-plus/test";
 import { z } from "zod";
-import { ApiError, fetcher } from "./fetcher";
+import { ApiError, fetcher, resultFetcher } from "./fetcher";
 
 const bookSchema = z.object({ id: z.string(), pageCount: z.number().int().positive() });
 
@@ -94,6 +94,87 @@ describe("fetcher", () => {
       "unexpected response from /api/pdf/b1",
       "INVALID_RESPONSE",
       200,
+    ]);
+  });
+});
+
+/** The four facts a caller reads off a failure, in one comparable value. */
+function failureOf(error: ApiError): [string, string, number, string] {
+  return [error.message, error.code, error.status, error.kind];
+}
+
+describe("resultFetcher", () => {
+  it("hands back the checked body as an Ok when the request succeeds", async () => {
+    const result = await resultFetcher(
+      "/api/pdf/b1",
+      bookSchema,
+      undefined,
+      respondingWith({ id: "b1", pageCount: 209 }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toStrictEqual({ id: "b1", pageCount: 209 });
+  });
+
+  it("reports a refusal as an Err carrying the server's own code", async () => {
+    const result = await resultFetcher(
+      "/api/pdf/b1",
+      bookSchema,
+      undefined,
+      respondingWith({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404),
+    );
+
+    expect(failureOf(result._unsafeUnwrapErr())).toStrictEqual([
+      "PDF not found",
+      "PDF_NOT_FOUND",
+      404,
+      "http",
+    ]);
+  });
+
+  it("reports a body that does not match the schema as a parse failure", async () => {
+    const result = await resultFetcher(
+      "/api/pdf/b1",
+      bookSchema,
+      undefined,
+      respondingWith({ id: "b1", pageCount: "209" }),
+    );
+
+    expect(failureOf(result._unsafeUnwrapErr())).toStrictEqual([
+      "unexpected response from /api/pdf/b1",
+      "INVALID_RESPONSE",
+      200,
+      "parse",
+    ]);
+  });
+
+  it("reports a request that never reached the server as a network failure", async () => {
+    // This is where resultFetcher parts company with fetcher: a mutation has
+    // nobody above it to catch a raw TypeError, so the offline case has to
+    // arrive as the same ApiError every other failure does.
+    const offline: typeof fetch = () => Promise.reject(new TypeError("Failed to fetch"));
+
+    const result = await resultFetcher("/api/pdf/b1", bookSchema, undefined, offline);
+
+    expect(failureOf(result._unsafeUnwrapErr())).toStrictEqual([
+      "request to /api/pdf/b1 could not be sent",
+      "NETWORK_ERROR",
+      0,
+      "network",
+    ]);
+  });
+
+  it("reports an aborted request under a code the caller can single out", async () => {
+    const aborted: typeof fetch = () =>
+      Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
+
+    const result = await resultFetcher("/api/pdf/b1", bookSchema, undefined, aborted);
+
+    expect(failureOf(result._unsafeUnwrapErr())).toStrictEqual([
+      "The operation was aborted.",
+      "ABORTED",
+      0,
+      "network",
     ]);
   });
 });
