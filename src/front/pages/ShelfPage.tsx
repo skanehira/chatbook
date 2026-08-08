@@ -15,15 +15,27 @@ export interface Book {
 /** Module-level so the effect below keeps a stable dependency. */
 const fetchBooks = () => fetcher<{ books: Book[] }>("/api/pdfs").then((data) => data.books);
 
+const requestBookDeletion = (id: string) =>
+  fetcher<{ deleted: true }>(`/api/pdf/${id}`, { method: "DELETE" });
+
 interface ShelfPageProps {
   loadBooks?: () => Promise<Book[]>;
+  deleteBook?: (id: string) => Promise<unknown>;
 }
 
 function bookTitle(fileName: string): string {
   return fileName.replace(/\.pdf$/i, "");
 }
 
-function BookCard({ book, onOpen }: { book: Book; onOpen: (id: string) => void }) {
+function BookCard({
+  book,
+  onOpen,
+  onDelete,
+}: {
+  book: Book;
+  onOpen: (id: string) => void;
+  onDelete: (book: Book) => void;
+}) {
   const [coverFailed, setCoverFailed] = useState(false);
   const showCover = book.hasThumbnail && !coverFailed;
   const title = bookTitle(book.fileName);
@@ -56,14 +68,79 @@ function BookCard({ book, onOpen }: { book: Book; onOpen: (id: string) => void }
         <p className="mt-2 line-clamp-2 text-sm font-medium text-gray-800">{title}</p>
         <p className="text-xs text-gray-500">{book.pageCount} ページ</p>
       </button>
+
+      <button
+        type="button"
+        aria-label={`${title} を削除`}
+        onClick={() => onDelete(book)}
+        className="absolute right-1.5 top-1.5 rounded-full bg-black/55 px-2 py-0.5 text-sm leading-normal text-white opacity-0 transition-opacity cursor-pointer hover:bg-red-600 focus-visible:opacity-100 group-hover/card:opacity-100"
+      >
+        ×
+      </button>
     </div>
   );
 }
 
-export function ShelfPage({ loadBooks = fetchBooks }: ShelfPageProps = {}) {
+function DeleteConfirmDialog({
+  book,
+  onConfirm,
+  onCancel,
+}: {
+  book: Book;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    // Escape is handled here rather than on document, so the listener lives and
+    // dies with the dialog itself.
+    <div
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onCancel();
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+    >
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-label="本の削除"
+        className="w-full max-w-sm rounded-lg bg-white p-5 shadow-xl"
+      >
+        <p className="text-sm text-gray-800">
+          「{bookTitle(book.fileName)}」を削除しますか？ハイライトとチャット履歴も削除されます。
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            autoFocus
+            onClick={onCancel}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 cursor-pointer hover:bg-gray-50"
+          >
+            キャンセル
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white cursor-pointer hover:bg-red-700"
+          >
+            削除する
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ShelfPage({
+  loadBooks = fetchBooks,
+  deleteBook = requestBookDeletion,
+}: ShelfPageProps = {}) {
   const navigate = useNavigate();
   const [books, setBooks] = useState<Book[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [bookPendingDeletion, setBookPendingDeletion] = useState<Book | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,6 +160,17 @@ export function ShelfPage({ loadBooks = fetchBooks }: ShelfPageProps = {}) {
   }, [loadBooks]);
 
   const openBook = useCallback((id: string) => navigate(`/books/${id}`), [navigate]);
+
+  const removeBook = async (book: Book) => {
+    setError(null);
+    setBookPendingDeletion(null);
+    try {
+      await deleteBook(book.id);
+      setBooks((current) => current?.filter((b) => b.id !== book.id) ?? current);
+    } catch (err) {
+      setError(`削除に失敗しました: ${(err as Error).message}`);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -109,12 +197,20 @@ export function ShelfPage({ loadBooks = fetchBooks }: ShelfPageProps = {}) {
           <ul className="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-5">
             {books.map((book) => (
               <li key={book.id}>
-                <BookCard book={book} onOpen={openBook} />
+                <BookCard book={book} onOpen={openBook} onDelete={setBookPendingDeletion} />
               </li>
             ))}
           </ul>
         )}
       </main>
+
+      {bookPendingDeletion && (
+        <DeleteConfirmDialog
+          book={bookPendingDeletion}
+          onConfirm={() => removeBook(bookPendingDeletion)}
+          onCancel={() => setBookPendingDeletion(null)}
+        />
+      )}
     </div>
   );
 }
