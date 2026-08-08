@@ -10,54 +10,9 @@ import {
   isStreamingAtom,
   streamingContentAtom,
 } from "../atoms/chatAtom";
+import { doneEvent, streamingFetchStub, tokenEvent } from "../../test/streamingFetchStub";
 
 const QUESTION = "Durable Objects とは?";
-
-function tokenEvent(content: string): string {
-  return `event: token\ndata: ${JSON.stringify({ content })}\n\n`;
-}
-
-function doneEvent(messageId: string): string {
-  return `event: done\ndata: ${JSON.stringify({ messageId })}\n\n`;
-}
-
-interface ChatCall {
-  url: string;
-  body: unknown;
-  emit: (sse: string) => void;
-  end: () => void;
-}
-
-/** A chat endpoint the test feeds by hand, and that gives up when aborted. */
-function streamingFetchStub() {
-  const encoder = new TextEncoder();
-  const calls: ChatCall[] = [];
-
-  const fetchFn: typeof fetch = (input, init) => {
-    if (typeof input !== "string" || typeof init?.body !== "string") {
-      throw new Error("the chat endpoint is called with a url and a JSON body");
-    }
-
-    let controller!: ReadableStreamDefaultController<Uint8Array>;
-    const body = new ReadableStream<Uint8Array>({
-      start(c) {
-        controller = c;
-      },
-    });
-    calls.push({
-      url: input,
-      body: JSON.parse(init.body) as unknown,
-      emit: (sse) => controller.enqueue(encoder.encode(sse)),
-      end: () => controller.close(),
-    });
-    init?.signal?.addEventListener("abort", () => {
-      controller.error(new DOMException("The operation was aborted.", "AbortError"));
-    });
-    return Promise.resolve(new Response(body, { status: 200 }));
-  };
-
-  return { fetchFn, calls };
-}
 
 function renderChatStream(fetchFn: typeof fetch) {
   const store = createStore();
