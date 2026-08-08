@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vite-plus/test";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { ShelfPage, type Book } from "./ShelfPage";
 
 function book(overrides: Partial<Book> = {}): Book {
@@ -21,9 +21,17 @@ function renderShelf(props: {
 }) {
   render(
     <MemoryRouter>
-      <ShelfPage {...props} />
+      <Routes>
+        <Route path="/" element={<ShelfPage {...props} />} />
+        <Route path="/books/:pdfId" element={<ReaderStub />} />
+      </Routes>
     </MemoryRouter>,
   );
+}
+
+/** Stands in for the reader so navigation away from the shelf is observable. */
+function ReaderStub() {
+  return <p>リーダー: {useParams().pdfId}</p>;
 }
 
 /** Records the ids it was asked to delete so tests can assert on them. */
@@ -40,15 +48,21 @@ function recordingDeleter() {
 const TWO_BOOKS = async () => [book(), book({ id: "book-2", fileName: "Rust 入門.pdf" })];
 
 describe("ShelfPage", () => {
-  it("lists the books it loaded", async () => {
-    renderShelf({
-      loadBooks: async () => [book(), book({ id: "book-2", fileName: "Rust 入門.pdf" })],
-    });
+  it("shows a card per book once the shelf has loaded", async () => {
+    renderShelf({ loadBooks: TWO_BOOKS });
 
     expect(
       await screen.findByRole("button", { name: "Cloudflare Workers 入門 を開く" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Rust 入門 を開く" })).toBeInTheDocument();
+  });
+
+  it("opens the reader for the book whose card was clicked", async () => {
+    renderShelf({ loadBooks: TWO_BOOKS });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Rust 入門 を開く" }));
+
+    expect(await screen.findByText("リーダー: book-2")).toBeInTheDocument();
   });
 
   it("reports why the shelf is empty when loading fails", async () => {
@@ -77,18 +91,22 @@ describe("ShelfPage", () => {
       screen.queryByRole("button", { name: "Cloudflare Workers 入門 を開く" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Rust 入門 を開く" })).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
-  it("warns that the highlights and chats go with the book", async () => {
+  it("warns that the highlights and chats go too when asked to delete a book", async () => {
     renderShelf({ loadBooks: TWO_BOOKS, deleteBook: recordingDeleter().deleteBook });
 
     await userEvent.click(
       await screen.findByRole("button", { name: "Cloudflare Workers 入門 を削除" }),
     );
 
-    expect(screen.getByRole("alertdialog")).toHaveTextContent(
-      "「Cloudflare Workers 入門」を削除しますか？ハイライトとチャット履歴も削除されます。",
-    );
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "「Cloudflare Workers 入門」を削除しますか？ハイライトとチャット履歴も削除されます。",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("keeps the book when the deletion is cancelled", async () => {
@@ -124,5 +142,39 @@ describe("ShelfPage", () => {
     expect(
       screen.getByRole("button", { name: "Cloudflare Workers 入門 を開く" }),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps the book when the confirmation is dismissed with Escape", async () => {
+    const { deletedIds, deleteBook } = recordingDeleter();
+    renderShelf({ loadBooks: TWO_BOOKS, deleteBook });
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Cloudflare Workers 入門 を削除" }),
+    );
+    await userEvent.keyboard("{Escape}");
+
+    expect(deletedIds).toEqual([]);
+    expect(
+      screen.getByRole("button", { name: "Cloudflare Workers 入門 を開く" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps the book when the click lands outside the confirmation", async () => {
+    const { deletedIds, deleteBook } = recordingDeleter();
+    renderShelf({ loadBooks: TWO_BOOKS, deleteBook });
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Cloudflare Workers 入門 を削除" }),
+    );
+    // The backdrop is the dialog's own wrapper; it has no role of its own
+    await userEvent.click(screen.getByRole("alertdialog").parentElement!);
+
+    expect(deletedIds).toEqual([]);
+    expect(
+      screen.getByRole("button", { name: "Cloudflare Workers 入門 を開く" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 });

@@ -59,6 +59,14 @@ interface PdfResponse {
 
 const FAKE_WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x00, 0x57, 0x45, 0x42, 0x50]);
 
+/** The content hash a book is stored under, which its R2 keys are derived from. */
+async function storedFileHash(pdfId: string): Promise<string> {
+  const row = (await env.DB.prepare("SELECT file_hash FROM pdfs WHERE id = ?")
+    .bind(pdfId)
+    .first()) as { file_hash: string };
+  return row.file_hash;
+}
+
 /** Row count for a table filtered by one column, used to observe cascade deletes. */
 async function countRows(table: string, column: string, value: string): Promise<number> {
   const row = (await env.DB.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`)
@@ -310,10 +318,15 @@ describe("PDF thumbnails", () => {
 });
 
 describe("DELETE /api/pdf/:pdfId", () => {
-  it("removes the book, its selections and chats, and its stored files", async () => {
+  it("removes only the deleted book, along with its selections, chats and stored files", async () => {
     const book = await uploadBook({
       tag: "delete-book",
       fileName: "delete-me.pdf",
+      thumbnail: new Blob([FAKE_WEBP], { type: "image/webp" }),
+    });
+    const survivor = await uploadBook({
+      tag: "delete-survivor",
+      fileName: "keep-me.pdf",
       thumbnail: new Blob([FAKE_WEBP], { type: "image/webp" }),
     });
 
@@ -345,9 +358,8 @@ describe("DELETE /api/pdf/:pdfId", () => {
       )
       .run();
 
-    const { file_hash: fileHash } = (await env.DB.prepare("SELECT file_hash FROM pdfs WHERE id = ?")
-      .bind(book.id)
-      .first()) as { file_hash: string };
+    const fileHash = await storedFileHash(book.id);
+    const survivorHash = await storedFileHash(survivor.id);
 
     expect(await countRows("selections", "pdf_id", book.id)).toBe(1);
     expect(await countRows("chat_messages", "selection_id", selection.id)).toBe(1);
@@ -367,6 +379,12 @@ describe("DELETE /api/pdf/:pdfId", () => {
     expect(await countRows("chat_messages", "selection_id", selection.id)).toBe(0);
     expect(await env.PDF_BUCKET.head(pdfObjectKey(fileHash))).toBeNull();
     expect(await env.PDF_BUCKET.head(thumbnailObjectKey(fileHash))).toBeNull();
+
+    // A delete that lost its WHERE clause would empty the whole shelf
+    const survivorResponse = await SELF.fetch(`https://example.com/api/pdf/${survivor.id}`);
+    expect(survivorResponse.status).toBe(200);
+    expect(await env.PDF_BUCKET.head(pdfObjectKey(survivorHash))).not.toBeNull();
+    expect(await env.PDF_BUCKET.head(thumbnailObjectKey(survivorHash))).not.toBeNull();
   });
 
   it("returns 404 for an unknown book", async () => {
