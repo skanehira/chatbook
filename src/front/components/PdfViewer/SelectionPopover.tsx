@@ -3,7 +3,12 @@ import { useState, useRef, useEffect } from "react";
 import { isSubmitKey } from "../../lib/isSubmitKey";
 
 interface SelectionPopoverProps {
-  onSubmit: (question: string) => void;
+  /**
+   * Asks the question. Awaited, so the popover can hold the reader off until
+   * the ask has been dealt with: it stays open when the highlight could not be
+   * stored, and a popover that stays open is one that can be submitted twice.
+   */
+  onSubmit: (question: string) => void | Promise<void>;
   onDismiss: () => void;
 }
 
@@ -13,6 +18,7 @@ interface SelectionPopoverProps {
  */
 export function SelectionPopover({ onSubmit, onDismiss }: SelectionPopoverProps) {
   const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -44,17 +50,30 @@ export function SelectionPopover({ onSubmit, onDismiss }: SelectionPopoverProps)
     return () => document.removeEventListener("mousedown", handleClick);
   }, [onDismiss]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const q = question.trim();
-    if (q) {
-      onSubmit(q);
+    // One ask at a time. Both routes in (the button and Enter) come through
+    // here, so this is the only gate needed.
+    if (!q || asking) return;
+
+    setAsking(true);
+    try {
+      await onSubmit(q);
+    } catch {
+      // Reporting is the asker's job — it owns the message and where it shows.
+      // Swallowing here only stops a rejection escaping an event handler,
+      // where nothing (not even the route's errorElement) would catch it.
+    } finally {
+      // A successful ask unmounts this popover, so this only ever puts a
+      // failed one back within reach of the reader.
+      setAsking(false);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (isSubmitKey(e.nativeEvent as unknown as KeyboardEvent)) {
       e.preventDefault();
-      handleSubmit();
+      void handleSubmit();
     }
   };
 
@@ -73,7 +92,8 @@ export function SelectionPopover({ onSubmit, onDismiss }: SelectionPopoverProps)
         onChange={(e) => setQuestion(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="選択した文章について質問する..."
-        className="w-full min-w-[280px] p-2 text-sm border border-gray-300 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        readOnly={asking}
+        className="w-full min-w-[280px] p-2 text-sm border border-gray-300 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent read-only:bg-gray-50"
         rows={2}
       />
       <div className="flex justify-end gap-2 mt-2">
@@ -86,11 +106,11 @@ export function SelectionPopover({ onSubmit, onDismiss }: SelectionPopoverProps)
         </button>
         <button
           type="button"
-          onClick={handleSubmit}
-          disabled={!question.trim()}
+          onClick={() => void handleSubmit()}
+          disabled={!question.trim() || asking}
           className="px-3 py-1 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
         >
-          質問する
+          {asking ? "送信中..." : "質問する"}
         </button>
       </div>
     </div>
