@@ -383,11 +383,26 @@ jsdom テストと Workers pool テストは同一プロセスで共存できな
 （`vite.config.ts` は `process.env.VITEST` のとき `cloudflare()` を無効化する）。
 
 **jsdom 側は `include` を書かず `exclude` だけで拾っている**（`node_modules` / `dist` /
-`test/worker/**` / `e2e/**` を除外）。そのため実装とコロケーションした
+`test/worker/**` / `e2e/**` / `.claude/**` を除外）。そのため実装とコロケーションした
 `src/server/services/*.test.ts` も自動的に jsdom で走る。バインディングを触らない純粋な
 サーバロジック（`chatService` の引用パース、`deepseekService` の SSE パースを注入 fetch で
 叩くもの）はこちらで書き、workerd の実物が要るものだけ `test/worker/**` に置く。
 **`include` を足して絞ると、これらが無言で走らなくなる**ので注意。
+
+### `.claude/**` を除外している理由
+
+Claude Code はエージェント用の worktree を `.claude/worktrees/` に作る。これはこのリポジトリの
+まるごとのチェックアウトなので、除外しないとメインクローンの `vp check` と `pnpm test` が
+**別ブランチのファイルを拾う**。実際に起きるのは次の 2 つ:
+
+- 作業中の未整形ファイルで `vp check` が落ちる（メインクローンのソースは健全なのに）
+- worktree 側の `e2e/**` と `test/worker/**` が jsdom の実行に混ざり、
+  `Playwright Test did not expect test() to be called here` や
+  `Failed to resolve import "cloudflare:test"` で落ちる
+
+`vite.config.ts` の `AGENT_WORKTREES` を `fmt.ignorePatterns` / `lint.ignorePatterns` /
+`test.exclude` の 3 箇所に渡している。**各 worktree の中で実行する `vp check` は自分の
+チェックアウトしか見ない**ので影響を受けず、CI もクリーンな checkout なので元から無関係。
 
 ### E2E の前提
 
