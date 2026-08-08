@@ -27,6 +27,25 @@ E2E を1件だけ走らせる: `pnpm run test:e2e -- -g "テスト名の一部"`
 
 `git push` 時に lefthook の `pre-push` が `vp check` + `vp build` を実行し、失敗すると push はブロックされる。
 
+### worktree を作ったら最初に `.dev.vars` を用意する
+
+`.dev.vars` は gitignore 済み（`.gitignore:4`）で **worktree には複製されない**。無いまま
+`vp dev`（`pnpm run test:e2e` の自動起動を含む）を動かすと、`@cloudflare/vite-plugin` が
+commit 済みの `worker-configuration.d.ts` を再生成し、`DEEPSEEK_API_KEY` の宣言が消えた差分が
+毎回出る。worktree を切ったら実装を始める前に用意する:
+
+```bash
+echo 'DEEPSEEK_API_KEY=dummy' > .dev.vars
+```
+
+型の差分は値ではなく鍵の**存在**で決まるので、ダミー値で消える。ただし DeepSeek へ実際に
+問い合わせるテスト（`e2e/chatbook.spec.ts` のチャット系）はダミー値だと認証が通らず、
+トークンが 1 つも届かないまま 60 秒のタイムアウトまで粘って落ちる。通したいとき（と E2E 全体を
+速く終わらせたいとき）はメインクローンの `.dev.vars` から実キーをコピーする。
+
+`.dev.vars.example` は Cognito 変数だけを列挙しており現在のコードと合っていないので、
+コピー元には使わない。
+
 ### `useEffect` の扱い
 
 `vite.config.ts` の `no-restricted-imports` が `useEffect` の import を禁止している。
