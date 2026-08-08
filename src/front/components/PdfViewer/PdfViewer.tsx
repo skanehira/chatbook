@@ -30,6 +30,8 @@ import { useChatStream } from "../../hooks/useChatStream";
 import { useHighlights } from "../../hooks/useHighlights";
 import type { ViewerAction } from "../../lib/keybindings";
 import { fetcher } from "../../lib/fetcher";
+import { bookDetailSchema } from "../../../shared/schemas/book";
+import { createdSelectionSchema } from "../../../shared/schemas/selection";
 
 interface PdfViewerProps {
   onSelectionClick: (selection: ActiveSelection) => void;
@@ -51,7 +53,7 @@ const SCROLL_STEP = 80;
 
 /** Books saved before highlights carried a colour fall back to the palette. */
 async function loadSelections(pdfId: string): Promise<SelectionHighlight[]> {
-  const data = await fetcher<{ selections: SelectionHighlight[] }>(`/api/pdf/${pdfId}`);
+  const data = await fetcher(`/api/pdf/${pdfId}`, bookDetailSchema);
   return data.selections.map((selection, i) => ({
     ...selection,
     color: selection.color || HIGHLIGHT_COLORS[i % HIGHLIGHT_COLORS.length],
@@ -229,21 +231,21 @@ export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
       setPopoverState(null);
 
       try {
-        const selection = await fetcher<{
-          id: string;
-          selectedText: string;
-          pageNumber: number;
-          positionData: { rects: { x: number; y: number; width: number; height: number }[] };
-          createdAt: string;
-        }>(`/api/pdf/${pdfDoc.id}/selections`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            selectedText: popoverState.selectedText,
-            pageNumber: popoverState.selectionPosition.pageNumber,
-            positionData: popoverState.selectionPosition,
-          }),
-        });
+        const selection = await fetcher(
+          `/api/pdf/${pdfDoc.id}/selections`,
+          createdSelectionSchema,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              selectedText: popoverState.selectedText,
+              pageNumber: popoverState.selectionPosition.pageNumber,
+              // The rest of the measurement (the text offsets the passage was
+              // found at) is stripped by the endpoint.
+              positionData: popoverState.selectionPosition,
+            }),
+          },
+        );
 
         // Add highlight
         const colorIdx = highlights.length % HIGHLIGHT_COLORS.length;

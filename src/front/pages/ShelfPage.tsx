@@ -3,15 +3,15 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { FileSelector } from "../components/PdfViewer/FileSelector";
 import { fetcher } from "../lib/fetcher";
-import type { BookSummary } from "../../shared/schemas/book";
+import { bookDeletedSchema, bookListSchema, type BookSummary } from "../../shared/schemas/book";
 
 export type Book = BookSummary;
 
 /** Module-level so the effect below keeps a stable dependency. */
-const fetchBooks = () => fetcher<{ books: Book[] }>("/api/pdfs").then((data) => data.books);
+const fetchBooks = () => fetcher("/api/pdfs", bookListSchema).then((data) => data.books);
 
 const requestBookDeletion = (id: string) =>
-  fetcher<{ deleted: true }>(`/api/pdf/${id}`, { method: "DELETE" });
+  fetcher(`/api/pdf/${id}`, bookDeletedSchema, { method: "DELETE" });
 
 interface ShelfPageProps {
   loadBooks?: () => Promise<Book[]>;

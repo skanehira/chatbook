@@ -4,6 +4,8 @@ import type * as pdfjsTypes from "pdfjs-dist";
 import type { PdfDoc } from "../atoms/pdfAtom";
 import { pdfjsLib, PDFJS_ASSET_OPTIONS } from "../lib/pdfjsConfig";
 import { renderCoverThumbnail } from "../lib/pdfLoader";
+import { fetcher } from "../lib/fetcher";
+import { bookDetailSchema, thumbnailStoredSchema } from "../../shared/schemas/book";
 
 /**
  * Books opened before covers existed have no thumbnail in storage. The reader
@@ -16,17 +18,22 @@ async function backfillCover(
   fetchFn: typeof fetch,
 ) {
   try {
-    const book = await fetchFn(`/api/pdf/${pdfId}`).then((r) => (r.ok ? r.json() : null));
-    if (!book || book.hasThumbnail) return;
+    const book = await fetcher(`/api/pdf/${pdfId}`, bookDetailSchema, undefined, fetchFn);
+    if (book.hasThumbnail) return;
 
     const thumbnail = await renderCoverThumbnail(doc);
     if (!thumbnail) return;
 
-    await fetchFn(`/api/pdf/${pdfId}/thumbnail`, {
-      method: "PUT",
-      headers: { "Content-Type": "image/webp" },
-      body: thumbnail,
-    });
+    await fetcher(
+      `/api/pdf/${pdfId}/thumbnail`,
+      thumbnailStoredSchema,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "image/webp" },
+        body: thumbnail,
+      },
+      fetchFn,
+    );
   } catch (err) {
     console.warn("Failed to backfill the book cover (non-critical):", err);
   }

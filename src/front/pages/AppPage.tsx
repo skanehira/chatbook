@@ -8,7 +8,6 @@ import {
   chatMessagesAtom,
   abortChatStreamAtom,
   type ActiveSelection,
-  type Citation,
 } from "../atoms/chatAtom";
 import { PdfViewer } from "../components/PdfViewer/PdfViewer";
 import { ChatArea } from "../components/ChatArea/ChatArea";
@@ -16,11 +15,14 @@ import { SettingsMenu } from "../components/SettingsMenu";
 import { useReadingLocation } from "../hooks/useReadingLocation";
 import { passageFromNavigation } from "../lib/textFragment";
 import { fetcher } from "../lib/fetcher";
+import { bookDetailSchema, locatedPageSchema } from "../../shared/schemas/book";
+import { chatHistorySchema } from "../../shared/schemas/chat";
 
 /** Asks the server which page a passage from a `#:~:text=` link is on. */
 async function locatePassage(pdfId: string, passage: string): Promise<number | null> {
-  const { pageNumber } = await fetcher<{ pageNumber: number | null }>(
+  const { pageNumber } = await fetcher(
     `/api/pdf/${pdfId}/locate?text=${encodeURIComponent(passage)}`,
+    locatedPageSchema,
   );
   return pageNumber;
 }
@@ -54,7 +56,7 @@ export function AppPage() {
     setPdfStatus("loading");
     setPdfError(null);
 
-    fetcher<{ id: string; fileName: string; pageCount: number }>(`/api/pdf/${pdfId}`)
+    fetcher(`/api/pdf/${pdfId}`, bookDetailSchema)
       .then((book) => {
         if (cancelled) return;
         setPdfDoc({ id: book.id, fileName: book.fileName, pageCount: book.pageCount });
@@ -93,26 +95,12 @@ export function AppPage() {
       if (!pdfDoc) return;
 
       try {
-        const data = await fetcher<{
-          selectionId: string;
-          messages: {
-            id: string;
-            role: string;
-            content: string;
-            citations?: Citation[];
-            createdAt: string;
-          }[];
-        }>(`/api/pdf/${pdfDoc.id}/selections/${selection.id}/chats`);
-
-        setChatMessages(
-          data.messages.map((m) => ({
-            id: m.id,
-            role: m.role as "user" | "assistant",
-            content: m.content,
-            citations: m.citations,
-            createdAt: m.createdAt,
-          })),
+        const data = await fetcher(
+          `/api/pdf/${pdfDoc.id}/selections/${selection.id}/chats`,
+          chatHistorySchema,
         );
+
+        setChatMessages(data.messages);
       } catch {
         setChatMessages([]);
       }

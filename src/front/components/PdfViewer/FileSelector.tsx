@@ -3,6 +3,7 @@ import { useAtom } from "jotai";
 import { pdfDocAtom, pdfStatusAtom, pdfErrorAtom } from "../../atoms/pdfAtom";
 import { extractPdfData } from "../../lib/pdfLoader";
 import { fetcher } from "../../lib/fetcher";
+import { pdfMetadataSchema } from "../../../shared/schemas/book";
 
 interface FileSelectorProps {
   /** Called with the book id once the upload finished, so the caller can navigate. */
@@ -37,11 +38,7 @@ export function FileSelector({ onOpened, label = "PDFを開く", className }: Fi
         formData.append("thumbnail", extracted.thumbnail, "cover.webp");
       }
 
-      const result = await fetcher<{
-        id: string;
-        fileName: string;
-        pageCount: number;
-      }>("/api/pdf/open", {
+      const result = await fetcher("/api/pdf/open", pdfMetadataSchema, {
         method: "POST",
         body: formData,
       });
