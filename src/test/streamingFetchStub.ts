@@ -15,6 +15,15 @@ export function doneEvent(messageId: string): string {
   return `event: done\ndata: ${JSON.stringify({ messageId })}\n\n`;
 }
 
+/** A citation block, with the payload left to the caller so it can be malformed. */
+export function citationEvent(citation: unknown): string {
+  return `event: citation\ndata: ${JSON.stringify(citation)}\n\n`;
+}
+
+export function errorEvent(code: string, message: string): string {
+  return `event: error\ndata: ${JSON.stringify({ code, message })}\n\n`;
+}
+
 export function streamingFetchStub() {
   const encoder = new TextEncoder();
   const calls: ChatCall[] = [];

@@ -10,7 +10,15 @@ import {
   isStreamingAtom,
   streamingContentAtom,
 } from "../atoms/chatAtom";
-import { doneEvent, streamingFetchStub, tokenEvent } from "../../test/streamingFetchStub";
+import {
+  citationEvent,
+  doneEvent,
+  errorEvent,
+  streamingFetchStub,
+  tokenEvent,
+} from "../../test/streamingFetchStub";
+import { ApiError } from "../lib/fetcher";
+import type { Citation } from "../atoms/chatAtom";
 
 const QUESTION = "Durable Objects とは?";
 
@@ -112,6 +120,58 @@ describe("useChatStream", () => {
     ]);
     expect(store.get(isStreamingAtom)).toBe(false);
     expect(store.get(chatAbortControllerAtom)).toBeNull();
+  });
+
+  it("keeps a citation of an unknown kind out of the answer's sources", async () => {
+    // `data as Citation` used to hand this straight to CitationBadge, which
+    // renders by `type`.
+    const { fetchFn, calls } = streamingFetchStub();
+    const { store, view } = renderChatStream(fetchFn);
+    const received: Citation[] = [];
+
+    let sent!: Promise<void>;
+    await act(async () => {
+      sent = view.result.current.sendMessage("p1", "s1", QUESTION, false, {
+        onCitation: (citation) => received.push(citation),
+      });
+    });
+    await act(async () => {
+      calls[0].emit(tokenEvent("単一のインスタンスです"));
+      calls[0].emit(citationEvent({ id: "1", type: "podcast", text: "出所不明" }));
+      calls[0].emit(
+        citationEvent({ id: "2", type: "pdf", text: "エッジで動きます", pageNumber: 3 }),
+      );
+      calls[0].emit(doneEvent("m1"));
+      calls[0].end();
+      await sent;
+    });
+
+    const expected = [{ id: "2", type: "pdf", text: "エッジで動きます", pageNumber: 3 }];
+    expect(received).toStrictEqual(expected);
+    expect(store.get(chatMessagesAtom).at(-1)?.citations).toStrictEqual(expected);
+  });
+
+  it("reports the code the server sent with a failed answer, not just its message", async () => {
+    const { fetchFn, calls } = streamingFetchStub();
+    const { view } = renderChatStream(fetchFn);
+    const errors: Error[] = [];
+
+    let sent!: Promise<void>;
+    await act(async () => {
+      sent = view.result.current.sendMessage("p1", "s1", QUESTION, false, {
+        onError: (err) => errors.push(err),
+      });
+    });
+    await act(async () => {
+      calls[0].emit(errorEvent("AI_API_ERROR", "upstream is down"));
+      calls[0].end();
+      await sent;
+    });
+
+    expect(errors.map((err) => [err.message, (err as ApiError).code])).toStrictEqual([
+      ["upstream is down", "AI_API_ERROR"],
+    ]);
+    expect(errors[0]).toBeInstanceOf(ApiError);
   });
 
   it("stamps both messages with the injected clock instead of the wall clock", async () => {

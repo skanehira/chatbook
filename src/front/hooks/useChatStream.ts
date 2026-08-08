@@ -10,6 +10,8 @@ import {
   type Citation,
 } from "../atoms/chatAtom";
 import { createSseParser } from "../lib/sseParser";
+import { ApiError } from "../lib/fetcher";
+import { chatSseEventSchema } from "../../shared/schemas/sse";
 
 /** fetch reports an abort with a DOMException, which does not extend Error. */
 function isAbortError(err: unknown): boolean {
@@ -91,28 +93,34 @@ export function useChatStream(fetchFn: typeof fetch = fetch, now: () => Date = s
           const { done, value } = await reader.read();
           if (done) break;
 
-          for (const { event, data } of parse(decoder.decode(value, { stream: true }))) {
-            switch (event) {
+          for (const block of parse(decoder.decode(value, { stream: true }))) {
+            // An event the schema does not recognise is skipped rather than
+            // passed on: a citation of an unknown kind would reach the badge
+            // that renders by `type`, and a malformed token would be appended
+            // to the answer as it is.
+            const parsed = chatSseEventSchema.safeParse(block);
+            if (!parsed.success) continue;
+
+            const event = parsed.data;
+            switch (event.event) {
               case "token": {
-                const { content: token } = data as { content?: string };
-                if (token) {
-                  fullContent += token;
-                  setStreamingContent(fullContent);
-                }
+                fullContent += event.data.content;
+                setStreamingContent(fullContent);
                 break;
               }
               case "citation": {
-                const citation = data as Citation;
-                citations.push(citation);
-                options.onCitation?.(citation);
+                citations.push(event.data);
+                options.onCitation?.(event.data);
                 break;
               }
               case "done": {
-                messageId = (data as { messageId?: string }).messageId ?? "";
+                messageId = event.data.messageId;
                 break;
               }
               case "error": {
-                streamError = new Error((data as { message?: string }).message ?? "stream error");
+                // The stream carries its failures at HTTP 200, so the status
+                // an error of this kind reports is the stream's own.
+                streamError = new ApiError(event.data.message, event.data.code, response.status);
                 break;
               }
             }
