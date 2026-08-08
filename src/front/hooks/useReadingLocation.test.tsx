@@ -11,12 +11,12 @@ const PDF_ID = "01JBOOK";
 
 /** Exposes the URL the hook drives and a way to turn pages like the viewer does. */
 function useHarness(locatePassage: LocatePassage, linkedPassage: string | null, visited: string[]) {
-  useReadingLocation(PDF_ID, locatePassage, linkedPassage);
+  const { passageNotFound } = useReadingLocation(PDF_ID, locatePassage, linkedPassage);
 
   const { search } = useLocation();
   if (visited[visited.length - 1] !== search) visited.push(search);
 
-  return { search, setCurrentPage: useSetAtom(currentPageAtom) };
+  return { search, passageNotFound, setCurrentPage: useSetAtom(currentPageAtom) };
 }
 
 function renderAt(
@@ -94,7 +94,37 @@ describe("useReadingLocation", () => {
       locatePassage: async () => null,
     });
 
-    await waitFor(() => expect(view.result.current.search).toBe("?page=1"));
+    await waitFor(() => expect(view.result.current.passageNotFound).toBe(true));
+    expect(view.result.current.search).toBe("?page=1");
     expect(store.get(currentPageAtom)).toBe(1);
+  });
+
+  it("reports a lookup that failed the same way as one that found nothing", async () => {
+    // Both leave the reader on page 1 with no idea why the link did not take
+    // them to the passage it named.
+    const { view } = renderAt(`/books/${PDF_ID}`, {
+      linkedPassage: "エッジは速い",
+      locatePassage: async () => {
+        throw new Error("PDF not found");
+      },
+    });
+
+    await waitFor(() => expect(view.result.current.passageNotFound).toBe(true));
+  });
+
+  it("keeps quiet while the lookup is still running", async () => {
+    const { view } = renderAt(`/books/${PDF_ID}`, {
+      linkedPassage: "エッジは速い",
+      locatePassage: () => new Promise(() => {}),
+    });
+
+    expect(view.result.current.passageNotFound).toBe(false);
+  });
+
+  it("keeps quiet for a page opened without a linked passage at all", async () => {
+    const { view } = renderAt(`/books/${PDF_ID}?page=42`);
+
+    await waitFor(() => expect(view.result.current.search).toBe("?page=42"));
+    expect(view.result.current.passageNotFound).toBe(false);
   });
 });

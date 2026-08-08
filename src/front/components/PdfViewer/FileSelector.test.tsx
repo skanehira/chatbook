@@ -27,10 +27,20 @@ function extraction(thumbnail: Blob | null): ExtractedPdfData {
 }
 
 /** Answers the upload the way the API does, and records what it was sent. */
-function uploadStub() {
+function uploadStub({ refuse = false } = {}) {
   const uploads: { url: string; method: string }[] = [];
   const fetchFn = (url: string, init?: RequestInit) => {
     uploads.push({ url, method: init?.method ?? "GET" });
+    if (refuse) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: { code: "PDF_EXTRACT_FAILED", message: "Failed to process PDF" },
+          }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
     const body = {
       id: PDF_ID,
       fileName: FILE_NAME,
@@ -42,19 +52,21 @@ function uploadStub() {
   return { uploads, fetchFn };
 }
 
-async function chooseAPdf(thumbnail: Blob | null) {
-  const { uploads, fetchFn } = uploadStub();
+async function chooseAPdf(thumbnail: Blob | null, { refuse = false } = {}) {
+  const { uploads, fetchFn } = uploadStub({ refuse });
   vi.stubGlobal("fetch", fetchFn);
 
   // The cache is built here rather than inside the provider so the test can
   // read what the upload filed in it.
   const cache: Cache = new Map();
   const opened: string[] = [];
+  const failures: string[] = [];
 
   const { container } = render(
     <SWRConfig value={{ provider: () => cache }}>
       <FileSelector
         onOpened={(id) => opened.push(id)}
+        onError={(message) => failures.push(message)}
         extract={async () => extraction(thumbnail)}
       />
     </SWRConfig>,
@@ -68,7 +80,7 @@ async function chooseAPdf(thumbnail: Blob | null) {
     new File(["%PDF-1.7"], FILE_NAME, { type: "application/pdf" }),
   );
 
-  return { cache, opened, uploads };
+  return { cache, opened, uploads, failures };
 }
 
 describe("FileSelector", () => {
@@ -100,6 +112,18 @@ describe("FileSelector", () => {
       hasThumbnail: false,
       selections: [],
     } satisfies BookDetail);
+  });
+
+  it("hands up the reason an upload was refused rather than swallowing it", async () => {
+    // The failure used to reach console.error only, so choosing a file the
+    // server rejected looked exactly like choosing no file at all.
+    const { cache, opened, failures } = await chooseAPdf(COVER, { refuse: true });
+
+    await waitFor(() =>
+      expect(failures).toStrictEqual(["PDFを開けませんでした: Failed to process PDF"]),
+    );
+    expect(opened).toStrictEqual([]);
+    expect(cache.get(bookKey(PDF_ID))).toBeUndefined();
   });
 
   it("sends the chosen file to the endpoint that stores books", async () => {

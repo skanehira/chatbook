@@ -62,7 +62,7 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
     () => passageFromNavigation(performance.getEntriesByType("navigation")),
     [],
   );
-  useReadingLocation(pdfId, locatePassage, linkedPassage);
+  const { passageNotFound } = useReadingLocation(pdfId, locatePassage, linkedPassage);
 
   // Load chat history when selection changes
   const handleSelectionClick = useCallback(
@@ -110,6 +110,15 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
           <SettingsMenu />
         </div>
       </header>
+
+      {/* A link that named a passage but did not land on it opens the book at
+          page 1, which is indistinguishable from an ordinary link. */}
+      {passageNotFound && linkedPassage !== null && (
+        <p role="status" className="shrink-0 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          リンクされた箇所が見つかりませんでした: {linkedPassage}
+        </p>
+      )}
+
       <main className="flex-1 min-h-0 flex">
         {/* Left panel: PDF Viewer */}
         <div style={{ width: `${leftWidth}%` }} className="h-full min-w-0">

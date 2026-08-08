@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import useSWR from "swr";
 import { FileSelector } from "../components/PdfViewer/FileSelector";
 import { fetcher } from "../lib/fetcher";
+import type { ExtractedPdfData } from "../lib/pdfLoader";
 import { bookDeletedSchema, bookListSchema, type BookSummary } from "../../shared/schemas/book";
 
 /** Cache key of the shelf, and the endpoint it is read from. */
@@ -16,6 +17,8 @@ const requestBookDeletion = (id: string) =>
 interface ShelfPageProps {
   loadBooks?: () => Promise<BookSummary[]>;
   deleteBook?: (id: string) => Promise<unknown>;
+  /** Passed straight to the file picker; injectable so tests can fail a read. */
+  extract?: (file: File) => Promise<ExtractedPdfData>;
 }
 
 function bookTitle(fileName: string): string {
@@ -131,20 +134,23 @@ function DeleteConfirmDialog({
 export function ShelfPage({
   loadBooks = fetchBooks,
   deleteBook = requestBookDeletion,
+  extract,
 }: ShelfPageProps = {}) {
   const navigate = useNavigate();
   const { data: books, error: loadError, mutate } = useSWR(SHELF_KEY, loadBooks);
-  const [deletionError, setDeletionError] = useState<string | null>(null);
+  // What the reader's last action did wrong: adding a book, or removing one.
+  // Both are worded by whoever detected them and shown in the same place.
+  const [actionError, setActionError] = useState<string | null>(null);
   const [bookPendingDeletion, setBookPendingDeletion] = useState<BookSummary | null>(null);
 
   const error =
-    deletionError ??
+    actionError ??
     (loadError ? `本棚の読み込みに失敗しました: ${(loadError as Error).message}` : null);
 
   const openBook = useCallback((id: string) => navigate(`/books/${id}`), [navigate]);
 
   const removeBook = async (book: BookSummary) => {
-    setDeletionError(null);
+    setActionError(null);
     setBookPendingDeletion(null);
     try {
       await deleteBook(book.id);
@@ -152,7 +158,7 @@ export function ShelfPage({
       // confirm what this list can work out for itself.
       await mutate((current) => current?.filter((b) => b.id !== book.id), { revalidate: false });
     } catch (err) {
-      setDeletionError(`削除に失敗しました: ${(err as Error).message}`);
+      setActionError(`削除に失敗しました: ${(err as Error).message}`);
     }
   };
 
@@ -160,7 +166,15 @@ export function ShelfPage({
     <div className="min-h-screen bg-gray-50">
       <header className="flex h-12 items-center justify-between border-b border-gray-200 bg-white px-4">
         <h1 className="text-lg font-bold text-gray-800">chatbook</h1>
-        <FileSelector onOpened={openBook} label="PDFを追加" />
+        <FileSelector
+          onOpened={(id) => {
+            setActionError(null);
+            void openBook(id);
+          }}
+          onError={setActionError}
+          extract={extract}
+          label="PDFを追加"
+        />
       </header>
 
       <main className="mx-auto max-w-6xl p-6">

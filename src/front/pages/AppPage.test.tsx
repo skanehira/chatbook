@@ -56,6 +56,9 @@ function readerFetchStub({ holdTheBook = false, refuseChatHistory = false } = {}
   // ever handed a url string.
   const fetchFn = (url: string) => {
     urls.push(url);
+    if (url.includes("/locate?")) {
+      return Promise.resolve(new Response(JSON.stringify({ pageNumber: null }), { status: 200 }));
+    }
     if (url.endsWith("/chats")) {
       const body = refuseChatHistory
         ? { error: { code: "SELECTION_NOT_FOUND", message: "Selection not found" } }
@@ -110,6 +113,7 @@ function renderReader(
 describe("AppPage", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("opens a book already in the cache without waiting for the server", async () => {
@@ -149,6 +153,21 @@ describe("AppPage", () => {
     // so this looks for the chat panel's own words rather than any alert.
     expect(
       await screen.findByText("チャット履歴を読み込めませんでした: Selection not found"),
+    ).toBeInTheDocument();
+  });
+
+  it("says a linked passage was not found instead of quietly opening page 1", async () => {
+    // The fragment is read off the navigation entry, since the browser strips
+    // it from location.hash before scripts can see it.
+    vi.spyOn(performance, "getEntriesByType").mockReturnValue([
+      {
+        name: `http://localhost/books/${BOOK_A.id}#:~:text=%E5%AD%98%E5%9C%A8%E3%81%97%E3%81%AA%E3%81%84`,
+      },
+    ] as PerformanceEntry[]);
+    renderReader(BOOK_A.id, { [bookKey(BOOK_A.id)]: BOOK_A });
+
+    expect(
+      await screen.findByText("リンクされた箇所が見つかりませんでした: 存在しない"),
     ).toBeInTheDocument();
   });
 

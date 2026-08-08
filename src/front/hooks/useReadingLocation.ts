@@ -25,12 +25,17 @@ function parsePage(value: string | null): number | null {
  *
  * A `#:~:text=` fragment — what Chrome's "Copy link to highlight" writes — wins
  * over `?page=`, since it names the passage the reader actually wants.
+ *
+ * `passageNotFound` is how a link that named a passage but did not deliver it
+ * says so. A book that simply does not contain it and a lookup that failed are
+ * the same thing from the reader's chair — the book opens on page 1 with no
+ * explanation — so they are reported together.
  */
 export function useReadingLocation(
   pdfId: string | undefined,
   locatePassage: LocatePassage,
   linkedPassage: string | null,
-): void {
+): { passageNotFound: boolean } {
   const [searchParams, setSearchParams] = useSearchParams();
   const [currentPage, setCurrentPage] = useAtom(currentPageAtom);
 
@@ -79,7 +84,7 @@ export function useReadingLocation(
 
   // Where a passage sits in a book cannot change while the book is open, so
   // this is asked once per link and never revalidated.
-  const { data: linkedPage } = useSWRImmutable(
+  const { data: linkedPage, error: locateError } = useSWRImmutable(
     pdfId && linkedPassage ? [pdfId, "locate", linkedPassage] : null,
     () => locatePassage(pdfId!, linkedPassage!),
   );
@@ -87,4 +92,11 @@ export function useReadingLocation(
   useEffect(() => {
     if (linkedPage) setCurrentPage(linkedPage);
   }, [linkedPage, setCurrentPage]);
+
+  // `undefined` is "still asking" and must not raise this; `null` is the
+  // server's answer that the passage is nowhere in the book.
+  const passageNotFound =
+    linkedPassage !== null && (linkedPage === null || locateError !== undefined);
+
+  return { passageNotFound };
 }

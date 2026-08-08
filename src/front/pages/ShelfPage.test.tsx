@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { ShelfPage } from "./ShelfPage";
+import type { ExtractedPdfData } from "../lib/pdfLoader";
 import type { BookSummary } from "../../shared/schemas/book";
 import { SwrTestCache } from "../../test/swrTestCache";
 
@@ -20,6 +21,7 @@ function book(overrides: Partial<BookSummary> = {}): BookSummary {
 function renderShelf(props: {
   loadBooks?: () => Promise<BookSummary[]>;
   deleteBook?: (id: string) => Promise<unknown>;
+  extract?: (file: File) => Promise<ExtractedPdfData>;
 }) {
   render(
     <SwrTestCache>
@@ -147,6 +149,41 @@ describe("ShelfPage", () => {
       screen.getByRole("button", { name: "Cloudflare Workers 入門 を開く" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("stays on the shelf and says why when a chosen file cannot be opened", async () => {
+    // Choosing a PDF that fails used to leave the shelf exactly as it was, so
+    // the reader had no way to tell it from a click that did not register.
+    const { container } = render(
+      <SwrTestCache>
+        <MemoryRouter>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <ShelfPage
+                  loadBooks={TWO_BOOKS}
+                  extract={() => Promise.reject(new Error("Invalid PDF structure"))}
+                />
+              }
+            />
+            <Route path="/books/:pdfId" element={<ReaderStub />} />
+          </Routes>
+        </MemoryRouter>
+      </SwrTestCache>,
+    );
+
+    await userEvent.upload(
+      container.querySelector<HTMLInputElement>('input[type="file"]')!,
+      new File(["not a pdf"], "broken.pdf", { type: "application/pdf" }),
+    );
+
+    expect(
+      await screen.findByText("PDFを開けませんでした: Invalid PDF structure"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Cloudflare Workers 入門 を開く" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps the book when the confirmation is dismissed with Escape", async () => {
