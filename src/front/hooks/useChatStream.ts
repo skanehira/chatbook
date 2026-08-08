@@ -23,9 +23,15 @@ interface ChatStreamOptions {
 }
 
 /**
+ * Default clock. Kept at module level so its identity is stable across
+ * renders and `sendMessage` is not rebuilt on every render.
+ */
+const systemNow = () => new Date();
+
+/**
  * Send a question and render the answer as it streams in.
  */
-export function useChatStream(fetchFn: typeof fetch = fetch) {
+export function useChatStream(fetchFn: typeof fetch = fetch, now: () => Date = systemNow) {
   const [, setMessages] = useAtom(chatMessagesAtom);
   const [, setStreamingContent] = useAtom(streamingContentAtom);
   const [, setIsStreaming] = useAtom(isStreamingAtom);
@@ -46,10 +52,10 @@ export function useChatStream(fetchFn: typeof fetch = fetch) {
 
       // Show the question straight away, before the model has answered
       const userMsg: ChatMessage = {
-        id: `temp-${Date.now()}`,
+        id: `temp-${now().getTime()}`,
         role: "user",
         content,
-        createdAt: new Date().toISOString(),
+        createdAt: now().toISOString(),
       };
       setMessages((prev) => [...prev, userMsg]);
       setStreamingContent("");
@@ -118,11 +124,11 @@ export function useChatStream(fetchFn: typeof fetch = fetch) {
         setMessages((prev) => [
           ...prev,
           {
-            id: messageId || `temp-${Date.now()}`,
+            id: messageId || `temp-${now().getTime()}`,
             role: "assistant",
             content: fullContent,
             citations,
-            createdAt: new Date().toISOString(),
+            createdAt: now().toISOString(),
           },
         ]);
         setStreamingContent("");
@@ -147,6 +153,7 @@ export function useChatStream(fetchFn: typeof fetch = fetch) {
     [
       abortChatStream,
       fetchFn,
+      now,
       setMessages,
       setStreamingContent,
       setIsStreaming,
