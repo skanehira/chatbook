@@ -14,12 +14,12 @@ import { doneEvent, streamingFetchStub, tokenEvent } from "../../test/streamingF
 
 const QUESTION = "Durable Objects とは?";
 
-function renderChatStream(fetchFn: typeof fetch) {
+function renderChatStream(fetchFn: typeof fetch, now?: () => Date) {
   const store = createStore();
   const wrapper = ({ children }: { children: ReactNode }) => (
     <Provider store={store}>{children}</Provider>
   );
-  return { store, view: renderHook(() => useChatStream(fetchFn), { wrapper }) };
+  return { store, view: renderHook(() => useChatStream(fetchFn, now), { wrapper }) };
 }
 
 describe("useChatStream", () => {
@@ -112,5 +112,38 @@ describe("useChatStream", () => {
     ]);
     expect(store.get(isStreamingAtom)).toBe(false);
     expect(store.get(chatAbortControllerAtom)).toBeNull();
+  });
+
+  it("stamps both messages with the injected clock instead of the wall clock", async () => {
+    const fixedNow = new Date("2026-01-02T03:04:05.678Z");
+    const { fetchFn, calls } = streamingFetchStub();
+    const { store, view } = renderChatStream(fetchFn, () => fixedNow);
+
+    let sent!: Promise<void>;
+    await act(async () => {
+      sent = view.result.current.sendMessage("p1", "s1", QUESTION, false);
+    });
+    await act(async () => {
+      calls[0].emit(tokenEvent("単一のインスタンスです"));
+      calls[0].emit(doneEvent("m1"));
+      calls[0].end();
+      await sent;
+    });
+
+    expect(store.get(chatMessagesAtom)).toEqual([
+      {
+        id: `temp-${fixedNow.getTime()}`,
+        role: "user",
+        content: QUESTION,
+        createdAt: "2026-01-02T03:04:05.678Z",
+      },
+      {
+        id: "m1",
+        role: "assistant",
+        content: "単一のインスタンスです",
+        citations: [],
+        createdAt: "2026-01-02T03:04:05.678Z",
+      },
+    ]);
   });
 });
