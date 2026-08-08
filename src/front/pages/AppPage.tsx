@@ -1,8 +1,7 @@
-// oxlint-disable-next-line no-restricted-imports -- SWR が読んだ本を共有ストア (jotai) の atom へ反映するために必要
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Provider, useAtom, useSetAtom } from "jotai";
 import { Link, useParams } from "react-router";
-import { pdfDocAtom, pdfStatusAtom, pdfErrorAtom, currentPageAtom } from "../atoms/pdfAtom";
+import { currentPageAtom } from "../atoms/pdfAtom";
 import {
   activeSelectionAtom,
   chatMessagesAtom,
@@ -50,9 +49,6 @@ export function AppPage() {
 
 function BookReader({ pdfId }: { pdfId: string | undefined }) {
   const { data: book, error } = useBook(pdfId);
-  const setPdfDoc = useSetAtom(pdfDocAtom);
-  const setPdfStatus = useSetAtom(pdfStatusAtom);
-  const setPdfError = useSetAtom(pdfErrorAtom);
   const [, setActiveSelection] = useAtom(activeSelectionAtom);
   const [, setChatMessages] = useAtom(chatMessagesAtom);
   const [, setCurrentPage] = useAtom(currentPageAtom);
@@ -65,36 +61,6 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
     [],
   );
   useReadingLocation(pdfId, locatePassage, linkedPassage);
-
-  // The viewer and its panels read the open book from the store, so what SWR
-  // holds has to be put there. Depending on the book's fields rather than the
-  // object keeps a highlight being added — which rewrites the cached book —
-  // from running this again.
-  useEffect(() => {
-    if (!pdfId) return;
-    if (book) {
-      setPdfDoc({ id: book.id, fileName: book.fileName, pageCount: book.pageCount });
-      setPdfStatus("ready");
-      setPdfError(null);
-      return;
-    }
-    if (error) {
-      setPdfError((error as Error).message);
-      setPdfStatus("error");
-      return;
-    }
-    setPdfStatus("loading");
-    setPdfError(null);
-  }, [
-    pdfId,
-    book?.id,
-    book?.fileName,
-    book?.pageCount,
-    error,
-    setPdfDoc,
-    setPdfStatus,
-    setPdfError,
-  ]);
 
   // Load chat history when selection changes
   const handleSelectionClick = useCallback(
@@ -142,7 +108,11 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
       <main className="flex-1 min-h-0 flex">
         {/* Left panel: PDF Viewer */}
         <div style={{ width: `${leftWidth}%` }} className="h-full min-w-0">
-          <PdfViewer onSelectionClick={handleSelectionClick} />
+          <PdfViewer
+            book={book}
+            bookError={error as Error | undefined}
+            onSelectionClick={handleSelectionClick}
+          />
         </div>
 
         {/* Resize handle */}
@@ -174,7 +144,7 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
 
         {/* Right panel: Chat Area */}
         <div style={{ width: `${100 - leftWidth}%` }} className="h-full min-w-0">
-          <ChatArea onSelectionClick={handleSelectionClick} />
+          <ChatArea book={book} onSelectionClick={handleSelectionClick} />
         </div>
       </main>
     </div>

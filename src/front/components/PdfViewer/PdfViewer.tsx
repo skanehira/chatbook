@@ -1,14 +1,7 @@
 // oxlint-disable-next-line no-restricted-imports -- 表示幅の ResizeObserver 購読、ページ遷移時のスクロール位置リセット、document への selectionchange 購読に必要
 import { useRef, useState, useCallback, useEffect } from "react";
 import { useAtomValue, useAtom } from "jotai";
-import {
-  pdfDocAtom,
-  pdfStatusAtom,
-  pdfErrorAtom,
-  currentPageAtom,
-  pageViewportAtom,
-  outlineOpenAtom,
-} from "../../atoms/pdfAtom";
+import { currentPageAtom, pageViewportAtom, outlineOpenAtom } from "../../atoms/pdfAtom";
 import {
   activeSelectionAtom,
   chatMessagesAtom,
@@ -16,6 +9,7 @@ import {
   type ActiveSelection,
 } from "../../atoms/chatAtom";
 import type { SelectionRect } from "../../../shared/schemas/selection";
+import type { BookDetail } from "../../../shared/schemas/book";
 import { PdfPage } from "./PdfPage";
 import { PdfOutline } from "./PdfOutline";
 import { SelectionPopover } from "./SelectionPopover";
@@ -32,16 +26,17 @@ import { fetcher } from "../../lib/fetcher";
 import { createdSelectionSchema } from "../../../shared/schemas/selection";
 
 interface PdfViewerProps {
+  /** The book being read, or nothing while it is still being read in. */
+  book: BookDetail | undefined;
+  /** Why the book could not be read, if it could not. */
+  bookError: Error | undefined;
   onSelectionClick: (selection: ActiveSelection) => void;
 }
 
 /** How far j/k move the page, in pixels. A few lines, like vim's line scroll. */
 const SCROLL_STEP = 80;
 
-export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
-  const pdfDoc = useAtomValue(pdfDocAtom);
-  const status = useAtomValue(pdfStatusAtom);
-  const error = useAtomValue(pdfErrorAtom);
+export function PdfViewer({ book, bookError, onSelectionClick }: PdfViewerProps) {
   const [currentPage, setCurrentPage] = useAtom(currentPageAtom);
   const [, setActiveSelection] = useAtom(activeSelectionAtom);
   const [, setChatMessages] = useAtom(chatMessagesAtom);
@@ -67,12 +62,12 @@ export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
 
   const [outlineOpen, setOutlineOpen] = useAtom(outlineOpenAtom);
 
-  const { highlights, addHighlight } = useHighlights(pdfDoc?.id);
-  const { pdfDocument } = usePdfDocument(pdfDoc);
+  const { highlights, addHighlight } = useHighlights(book?.id);
+  const { pdfDocument } = usePdfDocument(book);
   const { outline } = usePdfOutline(pdfDocument);
   const { sendMessage } = useChatStream();
 
-  const pageCount = pdfDoc?.pageCount ?? 1;
+  const pageCount = book?.pageCount ?? 1;
   const handleShortcut = useCallback(
     (action: ViewerAction) => {
       switch (action) {
@@ -204,25 +199,21 @@ export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
 
   const handlePopoverSubmit = useCallback(
     async (question: string) => {
-      if (!popoverState || !pdfDoc) return;
+      if (!popoverState || !book) return;
       setPopoverState(null);
 
       try {
-        const selection = await fetcher(
-          `/api/pdf/${pdfDoc.id}/selections`,
-          createdSelectionSchema,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              selectedText: popoverState.selectedText,
-              pageNumber: popoverState.selectionPosition.pageNumber,
-              // The rest of the measurement (the text offsets the passage was
-              // found at) is stripped by the endpoint.
-              positionData: popoverState.selectionPosition,
-            }),
-          },
-        );
+        const selection = await fetcher(`/api/pdf/${book.id}/selections`, createdSelectionSchema, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            selectedText: popoverState.selectedText,
+            pageNumber: popoverState.selectionPosition.pageNumber,
+            // The rest of the measurement (the text offsets the passage was
+            // found at) is stripped by the endpoint.
+            positionData: popoverState.selectionPosition,
+          }),
+        });
 
         addHighlight(selection);
 
@@ -235,14 +226,14 @@ export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
           pageNumber: selection.pageNumber,
         });
         setChatMessages([]);
-        await sendMessage(pdfDoc.id, selection.id, question, useWebSearch);
+        await sendMessage(book.id, selection.id, question, useWebSearch);
       } catch (err) {
         console.error("Failed to create selection:", err);
       }
     },
     [
       popoverState,
-      pdfDoc,
+      book,
       addHighlight,
       useWebSearch,
       setActiveSelection,
@@ -275,23 +266,17 @@ export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
 
   return (
     <div className="flex flex-col h-full bg-gray-100" onMouseUp={handleMouseUp}>
-      {status === "loading" && (
+      {bookError ? (
+        <div className="flex items-center justify-center flex-1">
+          <div className="text-red-500 text-lg">エラーが発生しました: {bookError.message}</div>
+        </div>
+      ) : null}
+
+      {!book && !bookError ? (
         <div className="flex items-center justify-center flex-1">
           <div className="text-gray-500 text-lg">PDFを読み込み中...</div>
         </div>
-      )}
-
-      {status === "error" && (
-        <div className="flex items-center justify-center flex-1">
-          <div className="text-red-500 text-lg">エラーが発生しました: {error}</div>
-        </div>
-      )}
-
-      {status === "idle" && !pdfDoc && (
-        <div className="flex items-center justify-center flex-1">
-          <div className="text-gray-400 text-lg">PDFファイルを選択してください</div>
-        </div>
-      )}
+      ) : null}
 
       {pdfDocument && (
         <div className="flex min-h-0 flex-1">
@@ -346,7 +331,7 @@ export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
               )}
             </div>
 
-            {pdfDoc && (
+            {book && (
               <div className="flex items-center justify-center gap-4 py-4">
                 <button
                   type="button"
@@ -365,12 +350,12 @@ export function PdfViewer({ onSelectionClick }: PdfViewerProps) {
                   前へ
                 </button>
                 <span className="text-sm text-gray-600">
-                  {currentPage} / {pdfDoc.pageCount}
+                  {currentPage} / {book.pageCount}
                 </span>
                 <button
                   type="button"
-                  onClick={() => setCurrentPage(Math.min(pdfDoc.pageCount, currentPage + 1))}
-                  disabled={currentPage >= pdfDoc.pageCount}
+                  onClick={() => setCurrentPage(Math.min(book.pageCount, currentPage + 1))}
+                  disabled={currentPage >= book.pageCount}
                   className="px-3 py-1 bg-white border rounded disabled:opacity-30 cursor-pointer"
                 >
                   次へ

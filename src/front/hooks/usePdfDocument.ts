@@ -2,11 +2,10 @@
 import { useState, useEffect, useRef } from "react";
 import useSWRMutation from "swr/mutation";
 import type * as pdfjsTypes from "pdfjs-dist";
-import type { PdfDoc } from "../atoms/pdfAtom";
 import { pdfjsLib, PDFJS_ASSET_OPTIONS } from "../lib/pdfjsConfig";
 import { renderCoverThumbnail } from "../lib/pdfLoader";
 import { fetcher } from "../lib/fetcher";
-import { bookDetailSchema, thumbnailStoredSchema } from "../../shared/schemas/book";
+import { thumbnailStoredSchema, type BookDetail } from "../../shared/schemas/book";
 
 /** Where a book's cover is written, and the key the write is tracked under. */
 const coverKey = (pdfId: string) => `/api/pdf/${pdfId}/thumbnail`;
@@ -16,19 +15,21 @@ const coverKey = (pdfId: string) => `/api/pdf/${pdfId}/thumbnail`;
  * already holds the rendered document, so generate the cover here and store it
  * once; otherwise those books would stay blank on the shelf forever.
  *
- * A book that already has a cover is left alone, so this costs one read for
- * every book but a write only for the ones that predate covers.
+ * Whether the book has one is passed in rather than read here: the caller is
+ * already holding the book, and asking for it again would be a second request
+ * for something this app has in hand.
  */
 export async function storeCoverIfMissing(
   pdfId: string,
   doc: pdfjsTypes.PDFDocumentProxy,
+  hasThumbnail: boolean,
   fetchFn: typeof fetch,
+  renderCover: (doc: pdfjsTypes.PDFDocumentProxy) => Promise<Blob | null> = renderCoverThumbnail,
 ) {
-  try {
-    const book = await fetcher(`/api/pdf/${pdfId}`, bookDetailSchema, undefined, fetchFn);
-    if (book.hasThumbnail) return;
+  if (hasThumbnail) return;
 
-    const thumbnail = await renderCoverThumbnail(doc);
+  try {
+    const thumbnail = await renderCover(doc);
     if (!thumbnail) return;
 
     await fetcher(
@@ -50,29 +51,38 @@ export async function storeCoverIfMissing(
  * Load the pdfjs-dist PDFDocumentProxy for the given book by fetching the
  * stored PDF binary from the API.
  */
-export function usePdfDocument(pdfDoc: PdfDoc | null, fetchFn: typeof fetch = fetch) {
+export function usePdfDocument(book: BookDetail | undefined, fetchFn: typeof fetch = fetch) {
   const [pdfDocument, setPdfDocument] = useState<pdfjsTypes.PDFDocumentProxy | null>(null);
   const loadingRef = useRef<string | null>(null);
 
-  // Storing a cover is a write, so it is triggered from the document being
-  // ready rather than being an effect of its own.
+  // Storing a cover is a write, so it goes through a mutation rather than an
+  // effect of its own. It is still triggered from the effect below because the
+  // event it answers to is pdf.js finishing the document — there is no reader
+  // action behind it.
   const { trigger: backfillCover } = useSWRMutation(
-    pdfDoc ? coverKey(pdfDoc.id) : null,
-    (_key: string, { arg }: { arg: { pdfId: string; doc: pdfjsTypes.PDFDocumentProxy } }) =>
-      storeCoverIfMissing(arg.pdfId, arg.doc, fetchFn),
+    book ? coverKey(book.id) : null,
+    (
+      _key: string,
+      {
+        arg,
+      }: {
+        arg: { pdfId: string; doc: pdfjsTypes.PDFDocumentProxy; hasThumbnail: boolean };
+      },
+    ) => storeCoverIfMissing(arg.pdfId, arg.doc, arg.hasThumbnail, fetchFn),
   );
 
   useEffect(() => {
-    if (!pdfDoc) {
+    if (!book) {
       setPdfDocument(null);
       return;
     }
 
     // Don't reload if already loaded for this doc id
-    if (loadingRef.current === pdfDoc.id && pdfDocument) return;
-    loadingRef.current = pdfDoc.id;
+    if (loadingRef.current === book.id && pdfDocument) return;
+    loadingRef.current = book.id;
 
-    const pdfId = pdfDoc.id;
+    const pdfId = book.id;
+    const hasThumbnail = book.hasThumbnail;
     let cancelled = false;
 
     async function loadPdf() {
@@ -92,7 +102,7 @@ export function usePdfDocument(pdfDoc: PdfDoc | null, fetchFn: typeof fetch = fe
         if (cancelled) return;
 
         setPdfDocument(doc);
-        void backfillCover({ pdfId, doc });
+        void backfillCover({ pdfId, doc, hasThumbnail });
       } catch (err) {
         console.error("Failed to load PDF for rendering:", err);
       }
@@ -104,7 +114,7 @@ export function usePdfDocument(pdfDoc: PdfDoc | null, fetchFn: typeof fetch = fe
     return () => {
       cancelled = true;
     };
-  }, [pdfDoc?.id]);
+  }, [book?.id]);
 
   return { pdfDocument };
 }

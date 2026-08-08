@@ -8,7 +8,7 @@ import {
   abortChatStreamAtom,
   type ActiveSelection,
 } from "../../atoms/chatAtom";
-import { pdfDocAtom } from "../../atoms/pdfAtom";
+import type { BookDetail } from "../../../shared/schemas/book";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatInput } from "./ChatInput";
 import { HighlightListPanel } from "./HighlightListPanel";
@@ -16,13 +16,14 @@ import { useChatStream } from "../../hooks/useChatStream";
 import { useHighlights } from "../../hooks/useHighlights";
 
 interface ChatAreaProps {
+  /** The book being read, or nothing while it is still being read in. */
+  book: BookDetail | undefined;
   onSelectionClick: (selection: ActiveSelection) => void;
 }
 
-export function ChatArea({ onSelectionClick }: ChatAreaProps) {
-  const pdfDoc = useAtomValue(pdfDocAtom);
+export function ChatArea({ book, onSelectionClick }: ChatAreaProps) {
   const [activeSelection, setActiveSelection] = useAtom(activeSelectionAtom);
-  const { highlights } = useHighlights(pdfDoc?.id);
+  const { highlights } = useHighlights(book?.id);
   const messages = useAtomValue(chatMessagesAtom);
   const streamingContent = useAtomValue(streamingContentAtom);
   const isStreaming = useAtomValue(isStreamingAtom);
@@ -32,11 +33,11 @@ export function ChatArea({ onSelectionClick }: ChatAreaProps) {
   const { sendMessage } = useChatStream();
 
   const handleSend = async (content: string) => {
-    if (!pdfDoc || !activeSelection) return;
-    await sendMessage(pdfDoc.id, activeSelection.id, content, useWebSearch);
+    if (!book || !activeSelection) return;
+    await sendMessage(book.id, activeSelection.id, content, useWebSearch);
   };
 
-  if (!pdfDoc) {
+  if (!book) {
     return (
       <div className="flex items-center justify-center h-full bg-white">
         <p className="text-gray-400 text-sm">PDFを開いてテキストを選択してください</p>

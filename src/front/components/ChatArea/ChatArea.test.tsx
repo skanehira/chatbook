@@ -12,7 +12,6 @@ import {
 } from "../../atoms/chatAtom";
 import type { SelectionHighlight } from "../../../shared/schemas/selection";
 import type { BookDetail } from "../../../shared/schemas/book";
-import { pdfDocAtom } from "../../atoms/pdfAtom";
 import { bookKey } from "../../hooks/useBook";
 import { SwrTestCache } from "../../../test/swrTestCache";
 
@@ -49,7 +48,6 @@ const BOOK: BookDetail = {
 function renderChat(options: { activeSelection?: ActiveSelection | null } = {}) {
   const { activeSelection = { id: "s1", selectedText: SELECTED_TEXT, pageNumber: 42 } } = options;
   const store = createStore();
-  store.set(pdfDocAtom, { id: BOOK.id, fileName: BOOK.fileName, pageCount: BOOK.pageCount });
   store.set(activeSelectionAtom, activeSelection);
 
   const opened: ActiveSelection[] = [];
@@ -58,7 +56,7 @@ function renderChat(options: { activeSelection?: ActiveSelection | null } = {}) 
     // one the viewer draws from.
     <SwrTestCache seed={{ [bookKey(BOOK.id)]: BOOK }}>
       <Provider store={store}>
-        <ChatArea onSelectionClick={(selection) => opened.push(selection)} />
+        <ChatArea book={BOOK} onSelectionClick={(selection) => opened.push(selection)} />
       </Provider>
     </SwrTestCache>,
   );

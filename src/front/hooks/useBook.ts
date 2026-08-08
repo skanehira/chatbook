@@ -13,11 +13,18 @@ export type LoadBook = (pdfId: string) => Promise<BookDetail>;
  * shows in all of them at once, and an upload can fill it in advance so that
  * opening the book it just wrote does not wait for a round trip.
  */
-export const bookKey = (pdfId: string) => `/api/pdf/${pdfId}`;
+const BOOK_PATH = "/api/pdf/";
+
+export const bookKey = (pdfId: string) => `${BOOK_PATH}${pdfId}`;
+
+/** The inverse of `bookKey`, so the fetcher reads the id off the key it is given. */
+const bookIdFromKey = (key: string) => key.slice(BOOK_PATH.length);
 
 export const fetchBook: LoadBook = (pdfId) => fetcher(bookKey(pdfId), bookDetailSchema);
 
 /** The book with the given id, or nothing at all while no book is open. */
 export function useBook(pdfId: string | undefined, loadBook: LoadBook = fetchBook) {
-  return useSWR(pdfId ? bookKey(pdfId) : null, () => loadBook(pdfId!));
+  // The id comes back out of the key rather than off the closure, so what is
+  // fetched cannot drift from what the result is filed under.
+  return useSWR(pdfId ? bookKey(pdfId) : null, (key: string) => loadBook(bookIdFromKey(key)));
 }
