@@ -52,6 +52,9 @@ export function passageFromNavigation(entries: { name: string }[]): string | nul
   try {
     return parseTextFragment(new URL(url).hash);
   } catch {
+    // The entry's name is whatever the browser recorded. One it cannot parse
+    // means this page was not opened from a link to a passage, which is the
+    // ordinary case, not a failure.
     return null;
   }
 }

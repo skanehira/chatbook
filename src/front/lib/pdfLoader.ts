@@ -33,6 +33,10 @@ export async function renderCoverThumbnail(doc: PDFDocumentProxy): Promise<Blob 
       canvas.toBlob((blob) => resolve(blob), "image/webp", 0.8);
     });
   } catch {
+    // Deliberately the one failure this app does not report. A cover is
+    // decoration: the shelf draws the title in its place, and stopping an
+    // upload — or putting an error beside a book that opened perfectly well —
+    // over a missing picture would cost the reader more than it tells them.
     return null;
   }
 }

@@ -27,6 +27,9 @@ async function resolvePageNumber(
       (await doc.getPageIndex(explicit[0] as Parameters<PDFDocumentProxy["getPageIndex"]>[0])) + 1
     );
   } catch {
+    // One bookmark pointing at nothing is not a broken table of contents: the
+    // entry is listed without a page and cannot be jumped to, while the rest
+    // of the outline stays usable.
     return null;
   }
 }
