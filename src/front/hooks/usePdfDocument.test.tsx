@@ -165,4 +165,51 @@ describe("usePdfDocument", () => {
 
     await waitFor(() => expect(result.current.error).toBe("Failed to fetch"));
   });
+
+  it("closes the document of the book being left when another one is opened", async () => {
+    // pdf.js keeps a worker per document, so a reader moving between books
+    // stacks one up for every book opened until the tab is closed.
+    const { closed, build } = documentBuilder();
+    const { result, rerender } = loadWith(servesBytes, build);
+    await waitFor(() => expect(result.current.pdfDocument).not.toBeNull());
+
+    rerender({ book: { ...BOOK, id: "01JOTHER" } });
+
+    await waitFor(() => expect(closed).toStrictEqual(["doc-1"]));
+  });
+
+  it("closes the document when the reader leaves the book", async () => {
+    const { closed, build } = documentBuilder();
+    const { result, unmount } = loadWith(servesBytes, build);
+    await waitFor(() => expect(result.current.pdfDocument).not.toBeNull());
+
+    unmount();
+
+    await waitFor(() => expect(closed).toStrictEqual(["doc-1"]));
+  });
+
+  it("closes a document that pdf.js finished after the reader had already left", async () => {
+    // Nothing is ever shown for this one, so the hook holds the only reference
+    // to the worker and the cleanup has already run by the time it arrives.
+    const closed: string[] = [];
+    let finishBuild: (() => void) | null = null;
+    const buildSlowly = () =>
+      new Promise<pdfjsTypes.PDFDocumentProxy>((resolve) => {
+        finishBuild = () =>
+          resolve({
+            destroy: () => {
+              closed.push("doc-1");
+              return Promise.resolve();
+            },
+          } as unknown as pdfjsTypes.PDFDocumentProxy);
+      });
+
+    const { unmount } = loadWith(servesBytes, buildSlowly);
+    await waitFor(() => expect(finishBuild).not.toBeNull());
+
+    unmount();
+    finishBuild!();
+
+    await waitFor(() => expect(closed).toStrictEqual(["doc-1"]));
+  });
 });

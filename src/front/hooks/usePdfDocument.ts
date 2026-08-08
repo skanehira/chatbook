@@ -102,6 +102,9 @@ export function usePdfDocument(
     const hasThumbnail = book.hasThumbnail;
     const url = `/api/pdf/${pdfId}/file`;
     let cancelled = false;
+    // pdf.js runs a worker per document and only releases it on destroy, so the
+    // one built here is closed when this book is left behind.
+    let opened: pdfjsTypes.PDFDocumentProxy | null = null;
     setError(null);
 
     async function loadPdf() {
@@ -116,7 +119,11 @@ export function usePdfDocument(
         if (cancelled) return;
 
         const doc = await buildDocument(arrayBuffer);
-        if (cancelled) return;
+        opened = doc;
+        if (cancelled) {
+          void doc.destroy();
+          return;
+        }
 
         setPdfDocument(doc);
         void backfillCover({ pdfId, doc, hasThumbnail });
@@ -133,6 +140,7 @@ export function usePdfDocument(
 
     return () => {
       cancelled = true;
+      void opened?.destroy();
     };
   }, [book?.id]);
 
