@@ -60,13 +60,23 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
       .post("/pdf/open", async (c) => {
         const formData = await c.req.parseBody().catch(() => null);
         if (!formData) {
-          return c.json({ error: { code: "VALIDATION_ERROR", message: "Invalid form body" } }, 400);
+          return c.json(
+            {
+              error: { code: "VALIDATION_ERROR" satisfies ErrorCode, message: "Invalid form body" },
+            },
+            400,
+          );
         }
 
         const file = formData.file;
         if (!file || !(file instanceof File)) {
           return c.json(
-            { error: { code: "VALIDATION_ERROR", message: "No PDF file provided" } },
+            {
+              error: {
+                code: "VALIDATION_ERROR" satisfies ErrorCode,
+                message: "No PDF file provided",
+              },
+            },
             400,
           );
         }
@@ -77,7 +87,12 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           typeof formData.pageCount === "string" ? parseInt(formData.pageCount, 10) : 0;
         if (!fullText || !Number.isFinite(pageCount) || pageCount <= 0) {
           return c.json(
-            { error: { code: "VALIDATION_ERROR", message: "Missing fullText or pageCount" } },
+            {
+              error: {
+                code: "VALIDATION_ERROR" satisfies ErrorCode,
+                message: "Missing fullText or pageCount",
+              },
+            },
             400,
           );
         }
@@ -111,7 +126,12 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
         } catch (err) {
           console.error("PDF open error:", err);
           return c.json(
-            { error: { code: "PDF_EXTRACT_FAILED", message: "Failed to process PDF" } },
+            {
+              error: {
+                code: "PDF_EXTRACT_FAILED" satisfies ErrorCode,
+                message: "Failed to process PDF",
+              },
+            },
             500,
           );
         }
@@ -127,13 +147,21 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           .where(eq(pdfs.id, c.req.param("pdfId")))
           .get();
         if (!pdf) {
-          return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
+          return c.json(
+            { error: { code: "PDF_NOT_FOUND" satisfies ErrorCode, message: "PDF not found" } },
+            404,
+          );
         }
 
         const object = await c.env.PDF_BUCKET.get(thumbnailObjectKey(pdf.fileHash));
         if (!object) {
           return c.json(
-            { error: { code: "THUMBNAIL_MISSING", message: "No cover stored for this book" } },
+            {
+              error: {
+                code: "THUMBNAIL_MISSING" satisfies ErrorCode,
+                message: "No cover stored for this book",
+              },
+            },
             404,
           );
         }
@@ -152,7 +180,10 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           .where(eq(pdfs.id, c.req.param("pdfId")))
           .get();
         if (!pdf) {
-          return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
+          return c.json(
+            { error: { code: "PDF_NOT_FOUND" satisfies ErrorCode, message: "PDF not found" } },
+            404,
+          );
         }
 
         if (c.req.header("Content-Type") !== THUMBNAIL_CONTENT_TYPE) {
@@ -169,7 +200,10 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
 
         const body = await c.req.arrayBuffer();
         if (body.byteLength === 0) {
-          return c.json({ error: { code: "VALIDATION_ERROR", message: "Empty thumbnail" } }, 400);
+          return c.json(
+            { error: { code: "VALIDATION_ERROR" satisfies ErrorCode, message: "Empty thumbnail" } },
+            400,
+          );
         }
         if (body.byteLength > MAX_THUMBNAIL_BYTES) {
           return c.json(
@@ -207,13 +241,21 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
         const d1Db = drizzle(c.env.DB);
         const pdf = await d1Db.select().from(pdfs).where(eq(pdfs.id, pdfId)).get();
         if (!pdf) {
-          return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
+          return c.json(
+            { error: { code: "PDF_NOT_FOUND" satisfies ErrorCode, message: "PDF not found" } },
+            404,
+          );
         }
 
         const object = await c.env.PDF_BUCKET.get(pdf.filePath);
         if (!object) {
           return c.json(
-            { error: { code: "PDF_FILE_MISSING", message: "PDF binary not found in storage" } },
+            {
+              error: {
+                code: "PDF_FILE_MISSING" satisfies ErrorCode,
+                message: "PDF binary not found in storage",
+              },
+            },
             404,
           );
         }
@@ -236,7 +278,10 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           .where(eq(pdfs.id, c.req.param("pdfId")))
           .get();
         if (!pdf) {
-          return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
+          return c.json(
+            { error: { code: "PDF_NOT_FOUND" satisfies ErrorCode, message: "PDF not found" } },
+            404,
+          );
         }
 
         return c.json({ pageNumber: findPageNumber(text, pdf.fullText, pdf.pageCount) ?? null });
@@ -246,7 +291,10 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
         const result = await getPdf(c.env.DB, c.env.PDF_BUCKET, pdfId);
 
         if (!result) {
-          return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
+          return c.json(
+            { error: { code: "PDF_NOT_FOUND" satisfies ErrorCode, message: "PDF not found" } },
+            404,
+          );
         }
 
         return c.json(result);
@@ -258,7 +306,10 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
         // Verify pdf exists
         const pdf = await d1Db.select().from(pdfs).where(eq(pdfs.id, pdfId)).get();
         if (!pdf) {
-          return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
+          return c.json(
+            { error: { code: "PDF_NOT_FOUND" satisfies ErrorCode, message: "PDF not found" } },
+            404,
+          );
         }
 
         // Validated, so positionData is already down to the shape the viewer
@@ -286,7 +337,12 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
         const sel = await d1Db.select().from(selections).where(eq(selections.id, selId)).get();
         if (!sel) {
           return c.json(
-            { error: { code: "SELECTION_NOT_FOUND", message: "Selection not found" } },
+            {
+              error: {
+                code: "SELECTION_NOT_FOUND" satisfies ErrorCode,
+                message: "Selection not found",
+              },
+            },
             404,
           );
         }
@@ -318,7 +374,12 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
 
           if (!apiKey) {
             return c.json(
-              { error: { code: "CONFIG_ERROR", message: "DEEPSEEK_API_KEY not set" } },
+              {
+                error: {
+                  code: "CONFIG_ERROR" satisfies ErrorCode,
+                  message: "DEEPSEEK_API_KEY not set",
+                },
+              },
               500,
             );
           }
@@ -326,7 +387,12 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           const sel = await d1Db.select().from(selections).where(eq(selections.id, selId)).get();
           if (!sel) {
             return c.json(
-              { error: { code: "SELECTION_NOT_FOUND", message: "Selection not found" } },
+              {
+                error: {
+                  code: "SELECTION_NOT_FOUND" satisfies ErrorCode,
+                  message: "Selection not found",
+                },
+              },
               404,
             );
           }
@@ -354,7 +420,10 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
             .get();
 
           if (!pdfRow) {
-            return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
+            return c.json(
+              { error: { code: "PDF_NOT_FOUND" satisfies ErrorCode, message: "PDF not found" } },
+              404,
+            );
           }
 
           // Get chat history
@@ -488,7 +557,10 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
       .delete("/pdf/:pdfId", async (c) => {
         const deleted = await deletePdf(c.env.DB, c.env.PDF_BUCKET, c.req.param("pdfId"));
         if (!deleted) {
-          return c.json({ error: { code: "PDF_NOT_FOUND", message: "PDF not found" } }, 404);
+          return c.json(
+            { error: { code: "PDF_NOT_FOUND" satisfies ErrorCode, message: "PDF not found" } },
+            404,
+          );
         }
 
         return c.json({ deleted: true });

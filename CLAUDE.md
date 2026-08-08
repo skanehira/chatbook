@@ -91,11 +91,13 @@ front と server が交わす形は `src/shared/schemas/` に zod スキーマ�
   の形に揃える。メッセージは zod の文言ではなく違反フィールドのパスなので、zod の更新で
   変わらない
 - **クライアントの受け口**は `src/front/lib/fetcher.ts` の `fetcher(url, schema, init?, fetchFn?)`。
-  `schema.safeParse` を通った値だけを返し、失敗はすべて `ApiError`（`message` / `code` /
-  `status`）で throw する。サーバの `error.code` が取れないときは `"UNKNOWN"`、
-  レスポンスがスキーマに合わないときは `"INVALID_RESPONSE"`
-- **`chatService.ts` の `LlmMessage`** は LLM 送信用で `system` role を含み、保存される
-  `ChatMessage`（`shared/schemas/chat.ts`）とは別物。shared に混ぜないこと
+  `schema.safeParse` を通った値だけを返す。**レスポンスが返ったあとの失敗 2 系統**——サーバが
+  拒否した（`error.code` を載せる。取れないときは `"UNKNOWN"`）と、レスポンスがスキーマに
+  合わない（`"INVALID_RESPONSE"`）——を `ApiError`（`message` / `code` / `status`）に揃えて
+  throw する。`fetch` 自体が reject するネットワーク断・abort はここでは包まず、
+  `TypeError` / `AbortError` がそのまま呼び出し側へ伝わる
+- **`src/server/services/chatService.ts` の `LlmMessage`** は LLM 送信用で `system` role を
+  含み、保存される `ChatMessage`（`src/shared/schemas/chat.ts`）とは別物。shared に混ぜないこと
 
 エラー形式は 2 系統あり、**ペイロード `{ code, message }` だけを共通化して transport の差は
 残している**。ストリーム開始前は HTTP ステータス + `{ error: { code, message } }`、開始後は
@@ -153,6 +155,10 @@ union + `satisfies` で固定する。
 - クライアントは `src/front/lib/sseParser.ts` の `createSseParser` で読む。
   SSE は**空行がブロック境界**で、`event:` は同じブロックの `data:` と対にする。
   バッファ全体から `data:` を検索すると同時到着したイベントが混線する
+- `createSseParser` が返すのは `{ event, data: unknown }` まで。そのあと
+  `src/front/hooks/useChatStream.ts` が `src/shared/schemas/sse.ts` の
+  `chatSseEventSchema`（4 イベントの discriminated union）で `safeParse` し、通ったものだけ
+  扱う。**キャストで済ませないこと**——未知の種別の出典が `CitationBadge` の描画に届く
 - 送信は **必ず `useChatStream` の `sendMessage` を通す**。ポップオーバーからの初回質問も同様。
   ここを生 `fetch` にすると質問文の即時表示と「考え中…」が出なくなる
 
