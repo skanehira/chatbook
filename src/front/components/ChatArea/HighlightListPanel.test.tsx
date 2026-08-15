@@ -65,4 +65,64 @@ describe("HighlightListPanel", () => {
     expect(screen.getByText("チャットを開始するには")).toBeInTheDocument();
     expect(screen.getByText("PDF内のテキストを選択して質問してください")).toBeInTheDocument();
   });
+
+  it("narrows the list to the passages holding what the reader typed", async () => {
+    render(<HighlightListPanel highlights={[OLDER, MIDDLE, NEWER]} onSelect={() => {}} />);
+
+    await userEvent.type(screen.getByLabelText("ハイライトを検索"), "結果整合");
+
+    expect(screen.getByText("ハイライト 3件中 1件")).toBeInTheDocument();
+    expect(screen.getByText(MIDDLE.selectedText)).toBeInTheDocument();
+    expect(screen.queryByText(OLDER.selectedText)).not.toBeInTheDocument();
+    expect(screen.queryByText(NEWER.selectedText)).not.toBeInTheDocument();
+  });
+
+  it("puts every highlight back once the query is cleared", async () => {
+    render(<HighlightListPanel highlights={[OLDER, MIDDLE, NEWER]} onSelect={() => {}} />);
+    const search = screen.getByLabelText("ハイライトを検索");
+
+    await userEvent.type(search, "結果整合");
+    await userEvent.clear(search);
+
+    expect(screen.getByText("ハイライト 3件")).toBeInTheDocument();
+    expect(screen.getByText(OLDER.selectedText)).toBeInTheDocument();
+    expect(screen.getByText(MIDDLE.selectedText)).toBeInTheDocument();
+    expect(screen.getByText(NEWER.selectedText)).toBeInTheDocument();
+  });
+
+  it("narrows the list to the highlights sitting inside the page range", async () => {
+    render(<HighlightListPanel highlights={[OLDER, MIDDLE, NEWER]} onSelect={() => {}} />);
+
+    await userEvent.type(screen.getByLabelText("開始ページ"), "40");
+    await userEvent.type(screen.getByLabelText("終了ページ"), "50");
+
+    expect(screen.getByText("ハイライト 3件中 1件")).toBeInTheDocument();
+    expect(screen.getByText(OLDER.selectedText)).toBeInTheDocument();
+    expect(screen.queryByText(MIDDLE.selectedText)).not.toBeInTheDocument();
+    expect(screen.queryByText(NEWER.selectedText)).not.toBeInTheDocument();
+  });
+
+  it("narrows by the query and the page range at once", async () => {
+    render(<HighlightListPanel highlights={[OLDER, MIDDLE, NEWER]} onSelect={() => {}} />);
+
+    // "ます" is in the two newer passages, page 40 on holds the two older ones,
+    // so only the highlight in both is left.
+    await userEvent.type(screen.getByLabelText("ハイライトを検索"), "ます");
+    await userEvent.type(screen.getByLabelText("開始ページ"), "40");
+
+    expect(screen.getByText("ハイライト 3件中 1件")).toBeInTheDocument();
+    expect(screen.getByText(MIDDLE.selectedText)).toBeInTheDocument();
+    expect(screen.queryByText(OLDER.selectedText)).not.toBeInTheDocument();
+    expect(screen.queryByText(NEWER.selectedText)).not.toBeInTheDocument();
+  });
+
+  it("says nothing matched but keeps the boxes, so the search can be widened again", async () => {
+    render(<HighlightListPanel highlights={[OLDER, MIDDLE, NEWER]} onSelect={() => {}} />);
+
+    await userEvent.type(screen.getByLabelText("ハイライトを検索"), "みつからない語");
+
+    expect(screen.getByText("一致するハイライトがありません")).toBeInTheDocument();
+    expect(screen.getByText("ハイライト 3件中 0件")).toBeInTheDocument();
+    expect(screen.getByLabelText("ハイライトを検索")).toHaveValue("みつからない語");
+  });
 });
