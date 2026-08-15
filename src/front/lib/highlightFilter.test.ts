@@ -89,6 +89,13 @@ describe("parsePageBound", () => {
     expect(parsePageBound(" 12 ")).toBe(12);
   });
 
+  it("reads a page number typed with a Japanese IME left on", () => {
+    // The reader is reading a Japanese book, so the IME is on more often than
+    // not; full-width digits mean the same page.
+    expect(parsePageBound("１２")).toBe(12);
+    expect(parsePageBound("　７　")).toBe(7);
+  });
+
   it("treats an empty box as no bound", () => {
     expect(parsePageBound("")).toBeNull();
   });
@@ -99,6 +106,14 @@ describe("parsePageBound", () => {
 
   it("treats text that is not a number as no bound", () => {
     expect(parsePageBound("abc")).toBeNull();
+  });
+
+  it("treats the other ways JavaScript spells a number as no bound", () => {
+    // A reader typing into a page box means digits; reading "0x10" as page 16
+    // would be the language's answer to a question nobody asked.
+    expect(parsePageBound("0x10")).toBeNull();
+    expect(parsePageBound("1e3")).toBeNull();
+    expect(parsePageBound("0b101")).toBeNull();
   });
 
   it("treats a page number below the first page as no bound", () => {

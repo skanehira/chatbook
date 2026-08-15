@@ -190,7 +190,7 @@ describe("useHighlights", () => {
     await finish(BOOK_A_ID, [highlight(), kept]);
 
     await act(async () => {
-      await view.result.current.removeHighlight("a1");
+      await view.result.current.removeHighlight(BOOK_A_ID, "a1");
     });
 
     expect(deleted).toStrictEqual([[BOOK_A_ID, "a1"]]);
@@ -213,7 +213,7 @@ describe("useHighlights", () => {
     await finish(BOOK_A_ID, A_HIGHLIGHTS);
 
     await act(async () => {
-      await view.result.current.panel.removeHighlight("a1");
+      await view.result.current.panel.removeHighlight(BOOK_A_ID, "a1");
     });
 
     expect(view.result.current.viewer.highlights).toStrictEqual([]);
@@ -230,7 +230,7 @@ describe("useHighlights", () => {
 
     let removal: Result<void, ApiError> | undefined;
     await act(async () => {
-      removal = await view.result.current.removeHighlight("a1");
+      removal = await view.result.current.removeHighlight(BOOK_A_ID, "a1");
     });
 
     expect(removal?.isErr() && removal.error).toBe(refusal);

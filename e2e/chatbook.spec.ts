@@ -1421,6 +1421,52 @@ test("the chat panel lists the highlights, opens one, and comes back to the list
   await expect(chatPanel.getByPlaceholder("質問を入力...")).toBeHidden();
 });
 
+test("a highlight deleted from the list stays gone after a reload", async ({ page }) => {
+  const pdfId = await openTestBook(page);
+  const doomedPassage = pageText(2).body[0];
+  const keptPassage = pageText(3).body[0];
+  for (const [passage, pageNumber] of [
+    [doomedPassage, 2],
+    [keptPassage, 3],
+  ] as const) {
+    await page.request.post(`/api/pdf/${pdfId}/selections`, {
+      data: {
+        selectedText: passage,
+        pageNumber,
+        positionData: {
+          startIndex: 0,
+          endIndex: passage.length,
+          rects: [{ x: 40, y: 40, width: 160, height: 24 }],
+        },
+      },
+    });
+  }
+  await page.reload();
+
+  const chatPanel = page.locator("main > div").last();
+  await expect(chatPanel.getByText("ハイライト 2件", { exact: true })).toBeVisible({
+    timeout: 60000,
+  });
+
+  const doomedRow = chatPanel.locator("li").filter({ hasText: doomedPassage });
+  await doomedRow.getByRole("button", { name: /を削除$/ }).click();
+  await expect(
+    page.getByText("このハイライトを削除しますか？このハイライトのチャット履歴も削除されます。"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "削除する" }).click();
+
+  await expect(chatPanel.getByText("ハイライト 1件", { exact: true })).toBeVisible();
+  await expect(chatPanel.getByText(doomedPassage, { exact: true })).toBeHidden();
+
+  // The server is what has to have dropped it: a list that only looks right
+  // until the next read would pass everything above.
+  await page.reload();
+  await expect(chatPanel.getByText("ハイライト 1件", { exact: true })).toBeVisible({
+    timeout: 60000,
+  });
+  await expect(chatPanel.getByText(keptPassage, { exact: true })).toBeVisible();
+});
+
 /**
  * Answer one question with a fixed stream, so the citation under test is the
  * test's own rather than whatever the model happens to write.

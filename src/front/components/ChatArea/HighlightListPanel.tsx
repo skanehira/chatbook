@@ -49,6 +49,10 @@ export function HighlightListPanel({ highlights, onSelect, onDelete }: Highlight
 
     const removal = await onDelete(highlight.id);
     if (removal.isErr()) {
+      // Lost if the reader opened a chat while this was in flight, since the
+      // list is unmounted by then and there is no list to say it on. What is
+      // still true either way is that the highlight is where it was: the
+      // reader comes back to it and can ask again.
       setActionError(`削除に失敗しました: ${removal.error.message}`);
     }
   };
@@ -153,7 +157,9 @@ export function HighlightListPanel({ highlights, onSelect, onDelete }: Highlight
                 type="button"
                 aria-label={`「${shortened(highlight.selectedText)}」を削除`}
                 onClick={() => setPendingDeletion(highlight)}
-                className="absolute right-2 top-2 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-gray-400 hover:bg-red-50 hover:text-red-600"
+                // 44px square, the size a thumb can hit: the same list is what
+                // a phone gets, inside the sheet.
+                className="absolute right-1 top-1 flex h-11 w-11 cursor-pointer items-center justify-center rounded-full text-gray-400 hover:bg-red-50 hover:text-red-600"
               >
                 <svg
                   aria-hidden="true"

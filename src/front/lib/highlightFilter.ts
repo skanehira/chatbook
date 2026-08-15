@@ -36,9 +36,18 @@ export function filterHighlights<T extends { selectedText: string; pageNumber: n
  * emptying the list while the reader is still typing.
  */
 export function parsePageBound(input: string): number | null {
-  const trimmed = input.trim();
-  if (trimmed === "") return null;
+  // Digits and nothing else: `Number` would also take "0x10" and "1e3", which
+  // are ways of writing a number rather than ways of writing a page. The
+  // full-width ones a Japanese IME produces are folded in first — they name the
+  // same page, and turning the IME off to type a page number is not something
+  // to ask of a reader in the middle of a Japanese book.
+  const trimmed = halfWidthDigits(input.trim());
+  if (!/^\d+$/.test(trimmed)) return null;
 
   const page = Number(trimmed);
-  return Number.isInteger(page) && page >= 1 ? page : null;
+  return page >= 1 ? page : null;
+}
+
+function halfWidthDigits(input: string): string {
+  return input.replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
 }

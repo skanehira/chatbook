@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vite-plus/test";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { HighlightListPanel, type HighlightListItem } from "./HighlightListPanel";
@@ -32,20 +32,23 @@ const NEWER: HighlightListItem = {
 
 const ACCEPTS_EVERY_DELETION = () => okAsync(undefined);
 
-function renderPanel(
-  highlights: HighlightListItem[],
-  handlers: {
-    onSelect?: (selection: ActiveSelection) => void;
-    onDelete?: (selectionId: string) => ResultAsync<void, ApiError>;
-  } = {},
-) {
-  return render(
+interface PanelHandlers {
+  onSelect?: (selection: ActiveSelection) => void;
+  onDelete?: (selectionId: string) => ResultAsync<void, ApiError>;
+}
+
+function panel(highlights: HighlightListItem[], handlers: PanelHandlers = {}) {
+  return (
     <HighlightListPanel
       highlights={highlights}
       onSelect={handlers.onSelect ?? (() => {})}
       onDelete={handlers.onDelete ?? ACCEPTS_EVERY_DELETION}
-    />,
+    />
   );
+}
+
+function renderPanel(highlights: HighlightListItem[], handlers: PanelHandlers = {}) {
+  return render(panel(highlights, handlers));
 }
 
 /** The delete button of one row, told apart from the row's own button. */
@@ -179,6 +182,7 @@ describe("HighlightListPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "削除する" }));
 
     expect(deleted).toStrictEqual([OLDER.id]);
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 
   it("deletes nothing when the reader cancels", async () => {
@@ -195,6 +199,7 @@ describe("HighlightListPanel", () => {
 
     expect(deleted).toStrictEqual([]);
     expect(screen.getByText(OLDER.selectedText)).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
   it("keeps the highlight and says why when the server refuses to delete it", async () => {
@@ -205,10 +210,11 @@ describe("HighlightListPanel", () => {
     await userEvent.click(deleteButtonOf(OLDER));
     await userEvent.click(screen.getByRole("button", { name: "削除する" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "削除に失敗しました: Unexpected server error",
-    );
+    expect(
+      await screen.findByText("削除に失敗しました: Unexpected server error"),
+    ).toBeInTheDocument();
     expect(screen.getByText(OLDER.selectedText)).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
   it("opens no chat when the reader reaches for a highlight's delete button", async () => {
@@ -222,13 +228,47 @@ describe("HighlightListPanel", () => {
   });
 
   it("keeps the list narrowed after a highlight is deleted out of it", async () => {
-    renderPanel([OLDER, MIDDLE, NEWER]);
+    const view = renderPanel([OLDER, MIDDLE, NEWER]);
     await userEvent.type(screen.getByLabelText("ハイライトを検索"), "結果整合");
 
     await userEvent.click(deleteButtonOf(MIDDLE));
     await userEvent.click(screen.getByRole("button", { name: "削除する" }));
+    // The list itself is the book's to update, so the shorter one arrives as a
+    // new prop — what the panel has to hold on to is the reader's narrowing.
+    view.rerender(panel([OLDER, NEWER]));
 
     expect(screen.getByLabelText("ハイライトを検索")).toHaveValue("結果整合");
-    expect(screen.getByText("ハイライト 3件中 1件")).toBeInTheDocument();
+    expect(screen.getByText("ハイライト 2件中 0件")).toBeInTheDocument();
+    expect(screen.getByText("一致するハイライトがありません")).toBeInTheDocument();
+  });
+
+  it("names the passage in each delete button, cut short when the passage runs long", () => {
+    const short: HighlightListItem = { ...OLDER, id: "01JSHORT", selectedText: "短い一文。" };
+    renderPanel([OLDER, short]);
+
+    expect(
+      screen.getByRole("button", { name: `「${OLDER.selectedText.slice(0, 20)}…」を削除` }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "「短い一文。」を削除" })).toBeInTheDocument();
+  });
+
+  it("clears the last failure once the next deletion goes through", async () => {
+    let refuse = true;
+    renderPanel([OLDER, NEWER], {
+      onDelete: () =>
+        refuse
+          ? errAsync(new ApiError("Unexpected server error", "INTERNAL_ERROR", 500))
+          : okAsync(undefined),
+    });
+    await userEvent.click(deleteButtonOf(OLDER));
+    await userEvent.click(screen.getByRole("button", { name: "削除する" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+    refuse = false;
+    await userEvent.click(deleteButtonOf(NEWER));
+    await userEvent.click(screen.getByRole("button", { name: "削除する" }));
+
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.getByText("ハイライト 2件")).toBeInTheDocument();
   });
 });

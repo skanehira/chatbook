@@ -108,7 +108,7 @@ export function ChatArea({
         onSelect={onSelectionClick}
         // Leaving the chat is the store's to decide once the server answers:
         // the reader can have opened one while the request was in flight.
-        onDelete={(id) => removeHighlight(id).map(() => selectionDeleted(id))}
+        onDelete={(id) => removeHighlight(book.id, id).map(() => selectionDeleted(id))}
       />
     );
   }

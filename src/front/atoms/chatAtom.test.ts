@@ -77,5 +77,12 @@ describe("selectionDeletedAtom", () => {
     expect(store.get(activeSelectionAtom)).toStrictEqual(OPEN_CHAT);
     expect(controller.signal.aborted).toBe(false);
     expect(store.get(isStreamingAtom)).toBe(true);
+
+    // The same chat does leave once it is the one deleted, so what stood above
+    // is the guard holding rather than the atom never doing anything.
+    store.set(selectionDeletedAtom, OPEN_CHAT.id);
+
+    expect(store.get(activeSelectionAtom)).toBeNull();
+    expect(controller.signal.aborted).toBe(true);
   });
 });
