@@ -767,10 +767,38 @@ move より前にスクロールへ吸われる。**44 は `HANDLE_WIDTH` 1 箇�
 #### ハイライト一覧は絞り込みと削除を自分で持つ
 
 一覧（`src/front/components/ChatArea/HighlightListPanel.tsx`）は**データ源を読まない
-props のコンポーネントのまま**で、絞り込みの入力値・削除ダイアログの開閉・直近の削除失敗
-（`actionError`）をローカル state に持つ。**絞り込みの算術は
-`src/front/lib/highlightFilter.ts`**（`filterHighlights` と、入力欄の文字列を境界値に直す
-`parsePageBound`）にあり、DOM を知らないので `highlightFilter.test.ts` が単体で持つ。
+props のコンポーネントのまま**で、持っているのは削除ダイアログの開閉と直近の削除失敗
+（`actionError`）だけ。**検索の入力も結果もパネルの外**にあり、
+`src/front/hooks/useHighlightSearch.ts` が入力・debounce・SWR をまとめて持つ。
+
+**検索の受け口は `GET /api/pdf/:pdfId/search?q=`**（`src/server/routes/pdf.ts` →
+`pdfService.ts` の `searchSelections`）。**サーバで検索するのは、チャットが本の
+レスポンスに載っていないから**——一覧は `GET /api/pdf/:pdfId` の `selections[]` から
+描かれるので、会話の中身はクライアントに無い。D1 の 1 クエリで `selections.selected_text`
+と `chat_messages.content` の両方を見る（2 つに分けて後で混ぜると、片方だけ届いた瞬間に
+結果がちらつく）。**返すのは該当した id の配列だけ**（`selectionSearchResultSchema`）で、
+ハイライトそのものは一覧が既に持っている。
+
+- 軸は**ハイライトの本文とそのチャットの本文**。色もページ範囲も軸にしていない——色は
+  選ぶ UI が無く保存された行がすべて D1 の既定値（`#FFEB3B`）、ページは読者が絞りたい
+  単位（章）と一致しない
+- **`%` と `_` はエスケープする**（`likeContaining`）。素通しすると `%` の検索が本の全件に
+  当たり、検索が壊れているようにしか見えない
+- **入力は 1 行に収める**（何かを足すときも）。狭い画面では同じ一覧が `ChatSheet` の中に
+  出て、half（画面の 46%）だと縦が無い
+- **打つたびに投げない**（`useHighlightSearch` が 250ms の debounce）。タイマーは
+  `onChange` の中で張る——`useEffect` を増やさずに済み、タイマーはそれを始めた打鍵のもの
+  だから。テストは `debounceMs` を DI して偽タイマーで進める
+- **検索していないときのヘッダは `ハイライト N件` のまま**。検索中だけ
+  `ハイライト N件中 M件` に変える。どちらも E2E と jsdom が完全一致で照合している
+- **答えが来るまで前の結果を見せたまま**にする（SWR の `keepPreviousData`）。全件に戻して
+  から絞り直すと、1 文字ごとに一覧が跳ねる
+- **一致が 0 件でも入力欄は残す**（消すと検索を解除する手段がなくなる）。本に
+  ハイライトが 1 つも無いときだけは、入力欄ごと出さずに始め方の案内を出す
+- **検索が失敗しても一覧は隠さない**。理由を上に出したうえで全件を見せる——検索できな
+  かったことと、一致が無かったことは別
+- **検索語はチャットを開いても残る**（フックが `ChatArea` にあり、一覧の unmount で
+  消えない）。戻れば絞り込まれたままの一覧に戻る
 
 **削除の受け口は `DELETE /api/pdf/:pdfId/selections/:selId`**（`src/server/routes/pdf.ts`）。
 ここは **service を挟まない唯一の削除**で、`pdfService` の `ResultAsync` も
@@ -778,20 +806,6 @@ props のコンポーネントのまま**で、絞り込みの入力値・削除
 （404 にしない。E2E が本のハイライトを掃除するのにこの冪等性を使っている）ので、画面に出る
 削除の失敗は回線断か 500 だけ。チャットは D1 の `ON DELETE CASCADE` が落とす。
 前後の形は `src/shared/schemas/selection.ts` の `selectionDeletedSchema`。
-
-- 軸は**本文の部分一致とページ範囲の 2 つだけ**。色は絞り込みの軸にしていない——色を選ぶ
-  UI が無く、保存された行はすべて D1 の既定値（`#FFEB3B`）なので、分ける相手がいない
-- **入力は 1 行に収める**（軸を足すときも）。狭い画面では同じ一覧が `ChatSheet` の中に出て、
-  half（画面の 46%）だと縦が無い
-- **ページ範囲の入力は全角数字も受ける**（`parsePageBound` が半角へ畳む）。日本語の本を
-  読んでいる最中に IME を切らせないため。`Number` に丸投げしないのは、`0x10` を 16
-  ページと読むような解釈を避けるため（受けるのは数字だけ）
-- **絞り込んでいないときのヘッダは `ハイライト N件` のまま**。絞り込み中だけ
-  `ハイライト N件中 M件` に変える。どちらも E2E と jsdom が完全一致で照合している
-- **一致が 0 件でも入力欄は残す**（消すと絞り込みを解除する手段がなくなる）。本に
-  ハイライトが 1 つも無いときだけは、入力欄ごと出さずに始め方の案内を出す
-- **絞り込みはチャットを開くと消える**（パネルのローカル state なので、一覧が
-  `ChatArea` の分岐で unmount される）。持ち越したくなったら `ChatArea` へ持ち上げる
 - 削除は行の**外**に置いたボタンから（行全体が `<button>` なので、中に入れると
   button の入れ子になる）。当たり判定は 44px 角（`h-11 w-11`。同じ一覧を電話が指で使う）。
   **hover で出し入れしない**——上記「狭い画面のリーダーは 1 カラム」の入力の表が数え上げて
@@ -820,13 +834,16 @@ props のコンポーネントのまま**で、絞り込みの入力値・削除
 
 | 何を                                     | どのテスト                                                                                                   |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| 絞り込みの算術（境界・全角・AND）        | `src/front/lib/highlightFilter.test.ts`                                                                      |
+| 検索の SQL（本文・チャット・`%`・他の本）| `test/worker/pdf.test.ts` の `GET /api/pdf/:pdfId/search`（8 件。**チャット本文で見つかることを守る唯一の場所**） |
+| 入力・debounce・失敗の運び方             | `src/front/hooks/useHighlightSearch.test.tsx`                                                                |
 | 一覧の見え方・削除の確認と失敗表示       | `HighlightListPanel.test.tsx`                                                                                |
+| 検索結果で一覧が絞られる                 | `ChatArea.test.tsx`「narrows the list to what the server says holds the query, chats included」              |
 | サーバが落とした分だけキャッシュから除く | `useHighlights.test.tsx`「takes a highlight the reader deleted out of the list without re-reading the book」 |
 | 失敗しても一覧に残す                     | 同「keeps the highlight and hands back the reason when the server refuses to delete it」                     |
 | 開いているチャットを畳む                 | `src/front/atoms/chatAtom.test.ts`「leaves the chat of a highlight that has just been deleted」              |
 | 待っている間に開かれたチャットを畳む     | `ChatArea.test.tsx`「leaves the chat a reader opened on a highlight while its deletion was in flight」       |
 | サーバから本当に消えている               | `e2e/chatbook.spec.ts`「a highlight deleted from the list stays gone after a reload」（desktop 1 本）        |
+| 検索が実際にサーバを通る                 | 同「searching the list narrows it to what the server matched」（**E2E からはチャットを保存できない**——実キー無しでは送信がサーバに届かないので、本文の検索だけ） |
 
 #### リーダーの URL は `useReadingLocation` が単独で書く
 
@@ -896,7 +913,9 @@ SWR の使い方で押さえるところ:
   **専用の atom を作らないこと**——SWR のキャッシュ自体が共有のグローバル state で、
   atom と二重管理すると必ずずれる。**削除も同じキーを通す**（`removeHighlight`。
   サーバが落としたものだけをキャッシュから除くので、一覧・ページ上のハイライト・
-  `PageToolbar` の件数が同時に追従する）
+  `PageToolbar` の件数が同時に追従する）。**検索だけは別のキー**
+  （`/api/pdf/:pdfId/search?q=`。検索語ごとに 1 エントリで、返るのは id の配列）
+  ——本のキャッシュを絞り込んだ結果で上書きすると、ページ上のハイライトまで消える
 - **本は props、ハイライトは購読**という線引きは意図的。本の見出し（id / fileName /
   pageCount）は開いている間変わらないので props で足りる。ハイライトは `PdfViewer` が
   足して `ChatArea` が一覧する——兄弟どうしが同じ更新を見る必要があるので、
@@ -918,13 +937,14 @@ SWR の使い方で押さえるところ:
   `atomFamily` を使わないのは非推奨で本を開くたびに警告を出すため
 - **テストの差し替え口は 2 つある**。取得そのものを差し替えるなら DI 引数——
   `useBook(pdfId, loadBook)` / `useHighlights(pdfId, loadBook, deleteHighlight)` /
+  `useHighlightSearch(pdfId, search, debounceMs)`（**時間も DI**）/
   `usePdfDocument(pdfId, book, fetchFn)` / `useChatStream(fetchFn, now)` /
   `useAskAboutSelection(addHighlight, saveSelection)` /
   `useReadingStateSync(pdfId, locationReady, save, debounceMs)`（**時間も DI**。テストは
   デバウンスを短くして偽タイマーで進める）/
   `ShelfPage({ loadBooks, deleteBook, extract })` / `FileSelector({ extract })` /
   `PdfViewer({ measureSelection, saveSelection })` /
-  `ChatArea({ readQuote, deleteHighlight })` がその口。`measureSelection` は
+  `ChatArea({ readQuote, deleteHighlight, searchHighlights })` がその口。`measureSelection` は
   ポップオーバーを開く唯一の入口で、**実 DOM 選択と pdf.js が描いたページを両方要求する
   経路（質問・保存失敗の表示・二重送信の防止）を jsdom で動かすための seam**。
   キャッシュの中身を用意したいなら `src/test/swrTestCache.tsx` の `SwrTestCache` で包む
