@@ -7,6 +7,7 @@ import {
   activeSelectionAtom,
   chatErrorAtom,
   abortChatStreamAtom,
+  selectionDeletedAtom,
   type ActiveSelection,
 } from "../../atoms/chatAtom";
 import type { BookDetail } from "../../../shared/schemas/book";
@@ -15,7 +16,7 @@ import { ChatInput } from "./ChatInput";
 import { HighlightListPanel } from "./HighlightListPanel";
 import { useWebSearchAtom } from "../../atoms/settingsAtom";
 import { useChatStream } from "../../hooks/useChatStream";
-import { useHighlights } from "../../hooks/useHighlights";
+import { useHighlights, type DeleteHighlight } from "../../hooks/useHighlights";
 import { formatQuotedQuestion } from "../../lib/quotedQuestion";
 import type { ReadChatQuote } from "../../lib/chatQuoteSelection";
 
@@ -27,6 +28,8 @@ interface ChatAreaProps {
   onSelectionClick: (selection: ActiveSelection) => void;
   /** Reads what a drag over the thread selected; injectable for tests. */
   readQuote?: ReadChatQuote;
+  /** Removes a highlight; injectable so tests can record or refuse one. */
+  deleteHighlight?: DeleteHighlight;
 }
 
 /** A failure worded for the reader, in the one place the panel shows them. */
@@ -38,9 +41,16 @@ function ChatErrorNotice({ message }: { message: string }) {
   );
 }
 
-export function ChatArea({ book, bookError, onSelectionClick, readQuote }: ChatAreaProps) {
+export function ChatArea({
+  book,
+  bookError,
+  onSelectionClick,
+  readQuote,
+  deleteHighlight,
+}: ChatAreaProps) {
   const [activeSelection, setActiveSelection] = useAtom(activeSelectionAtom);
-  const { highlights } = useHighlights(book?.id);
+  const { highlights, removeHighlight } = useHighlights(book?.id, undefined, deleteHighlight);
+  const selectionDeleted = useSetAtom(selectionDeletedAtom);
   const messages = useAtomValue(chatMessagesAtom);
   const streamingContent = useAtomValue(streamingContentAtom);
   const isStreaming = useAtomValue(isStreamingAtom);
@@ -92,7 +102,15 @@ export function ChatArea({ book, bookError, onSelectionClick, readQuote }: ChatA
   }
 
   if (!activeSelection) {
-    return <HighlightListPanel highlights={highlights} onSelect={onSelectionClick} />;
+    return (
+      <HighlightListPanel
+        highlights={highlights}
+        onSelect={onSelectionClick}
+        // Leaving the chat is the store's to decide once the server answers:
+        // the reader can have opened one while the request was in flight.
+        onDelete={(id) => removeHighlight(id).map(() => selectionDeleted(id))}
+      />
+    );
   }
 
   return (

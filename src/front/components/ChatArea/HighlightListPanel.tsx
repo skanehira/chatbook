@@ -1,6 +1,9 @@
 import { useState } from "react";
+import type { ResultAsync } from "neverthrow";
 import type { ActiveSelection } from "../../atoms/chatAtom";
+import type { ApiError } from "../../lib/fetcher";
 import { filterHighlights, parsePageBound } from "../../lib/highlightFilter";
+import { ConfirmDialog } from "../ConfirmDialog";
 
 export interface HighlightListItem {
   id: string;
@@ -13,6 +16,13 @@ export interface HighlightListItem {
 interface HighlightListPanelProps {
   highlights: HighlightListItem[];
   onSelect: (selection: ActiveSelection) => void;
+  /** Removes a highlight and its chat; its failure comes back in the value. */
+  onDelete: (selectionId: string) => ResultAsync<void, ApiError>;
+}
+
+/** Enough of a passage to tell one delete button from another. */
+function shortened(passage: string): string {
+  return passage.length <= 20 ? passage : `${passage.slice(0, 20)}…`;
 }
 
 /** Newest first, so the passage the reader just marked is at the top. */
@@ -23,12 +33,25 @@ function newestFirst(highlights: HighlightListItem[]): HighlightListItem[] {
 const NARROWING_INPUT_CLASS =
   "rounded border border-gray-300 px-2 py-1 text-sm text-gray-700 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none";
 
-export function HighlightListPanel({ highlights, onSelect }: HighlightListPanelProps) {
+export function HighlightListPanel({ highlights, onSelect, onDelete }: HighlightListPanelProps) {
   // What the reader typed, kept as typed: the bounds are read back out of the
   // boxes on every render rather than stored a second time.
   const [query, setQuery] = useState("");
   const [pageFromInput, setPageFromInput] = useState("");
   const [pageToInput, setPageToInput] = useState("");
+  const [pendingDeletion, setPendingDeletion] = useState<HighlightListItem | null>(null);
+  /** Why the last deletion did not happen, worded here for the reader. */
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const removeHighlight = async (highlight: HighlightListItem) => {
+    setActionError(null);
+    setPendingDeletion(null);
+
+    const removal = await onDelete(highlight.id);
+    if (removal.isErr()) {
+      setActionError(`削除に失敗しました: ${removal.error.message}`);
+    }
+  };
 
   if (highlights.length === 0) {
     return (
@@ -87,6 +110,11 @@ export function HighlightListPanel({ highlights, onSelect }: HighlightListPanelP
           className={`w-14 ${NARROWING_INPUT_CLASS}`}
         />
       </div>
+      {actionError !== null && (
+        <p role="alert" className="m-2 rounded-md bg-red-50 p-3 text-sm text-red-600">
+          {actionError}
+        </p>
+      )}
       {narrowed.length === 0 ? (
         <p className="flex-1 px-4 py-6 text-center text-sm text-gray-400">
           一致するハイライトがありません
@@ -94,7 +122,10 @@ export function HighlightListPanel({ highlights, onSelect }: HighlightListPanelP
       ) : (
         <ul className="flex-1 overflow-y-auto">
           {newestFirst(narrowed).map((highlight) => (
-            <li key={highlight.id}>
+            // The delete button sits beside the row's button rather than
+            // inside it: a button within a button is not markup a browser can
+            // make sense of.
+            <li key={highlight.id} className="relative">
               <button
                 type="button"
                 onClick={() =>
@@ -104,7 +135,7 @@ export function HighlightListPanel({ highlights, onSelect }: HighlightListPanelP
                     pageNumber: highlight.pageNumber,
                   })
                 }
-                className="flex w-full cursor-pointer items-start gap-3 border-b border-gray-100 px-4 py-3 text-left hover:bg-gray-50"
+                className="flex w-full cursor-pointer items-start gap-3 border-b border-gray-100 py-3 pl-4 pr-12 text-left hover:bg-gray-50"
               >
                 <span
                   aria-hidden="true"
@@ -118,9 +149,36 @@ export function HighlightListPanel({ highlights, onSelect }: HighlightListPanelP
                   <span className="mt-1 block text-xs text-gray-400">{`${highlight.pageNumber}ページ`}</span>
                 </span>
               </button>
+              <button
+                type="button"
+                aria-label={`「${shortened(highlight.selectedText)}」を削除`}
+                onClick={() => setPendingDeletion(highlight)}
+                className="absolute right-2 top-2 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-gray-400 hover:bg-red-50 hover:text-red-600"
+              >
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 20 20"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  className="h-4 w-4"
+                >
+                  <path d="M6 6l8 8M14 6l-8 8" />
+                </svg>
+              </button>
             </li>
           ))}
         </ul>
+      )}
+
+      {pendingDeletion && (
+        <ConfirmDialog
+          message="このハイライトを削除しますか？このハイライトのチャット履歴も削除されます。"
+          dialogLabel="ハイライトの削除"
+          confirmLabel="削除する"
+          onConfirm={() => removeHighlight(pendingDeletion)}
+          onCancel={() => setPendingDeletion(null)}
+        />
       )}
     </div>
   );

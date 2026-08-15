@@ -1,6 +1,12 @@
 import { useCallback, useMemo } from "react";
+import { errAsync, type ResultAsync } from "neverthrow";
 import { useBook, fetchBook, type LoadBook } from "./useBook";
-import type { CreatedSelection, SelectionHighlight } from "../../shared/schemas/selection";
+import { resultFetcher, ApiError, CLIENT_ERROR_CODES } from "../lib/fetcher";
+import {
+  selectionDeletedSchema,
+  type CreatedSelection,
+  type SelectionHighlight,
+} from "../../shared/schemas/selection";
 
 /** Books saved before highlights carried a colour fall back to the palette. */
 const HIGHLIGHT_COLORS = [
@@ -16,8 +22,23 @@ const HIGHLIGHT_COLORS = [
 
 const NO_HIGHLIGHTS: SelectionHighlight[] = [];
 
-/** The highlights of the book currently open, and a way to add one. */
-export function useHighlights(pdfId: string | undefined, loadBook: LoadBook = fetchBook) {
+/** Removes a highlight. A write, so its failure comes back in the value. */
+export type DeleteHighlight = (
+  pdfId: string,
+  selectionId: string,
+) => ResultAsync<unknown, ApiError>;
+
+const requestHighlightDeletion: DeleteHighlight = (pdfId, selectionId) =>
+  resultFetcher(`/api/pdf/${pdfId}/selections/${selectionId}`, selectionDeletedSchema, {
+    method: "DELETE",
+  });
+
+/** The highlights of the book currently open, and ways to add and remove one. */
+export function useHighlights(
+  pdfId: string | undefined,
+  loadBook: LoadBook = fetchBook,
+  deleteHighlight: DeleteHighlight = requestHighlightDeletion,
+) {
   const { data, mutate } = useBook(pdfId, loadBook);
 
   const highlights = useMemo(
@@ -45,5 +66,32 @@ export function useHighlights(pdfId: string | undefined, loadBook: LoadBook = fe
     [mutate],
   );
 
-  return { highlights, addHighlight };
+  /**
+   * Drop a highlight the reader asked to be rid of, along with its chat.
+   *
+   * Only once the server has taken it: a list that lost it optimistically would
+   * have to put it back on a refusal, and the reader would watch it return.
+   */
+  const removeHighlight = useCallback(
+    (selectionId: string): ResultAsync<void, ApiError> => {
+      if (!pdfId) {
+        return errAsync(
+          new ApiError("本が開かれていません", CLIENT_ERROR_CODES.unknown, 0, "network"),
+        );
+      }
+
+      return deleteHighlight(pdfId, selectionId).map(() => {
+        void mutate(
+          (book) =>
+            book
+              ? { ...book, selections: book.selections.filter((s) => s.id !== selectionId) }
+              : book,
+          { revalidate: false },
+        );
+      });
+    },
+    [deleteHighlight, mutate, pdfId],
+  );
+
+  return { highlights, addHighlight, removeHighlight };
 }

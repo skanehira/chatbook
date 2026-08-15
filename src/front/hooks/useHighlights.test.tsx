@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vite-plus/test";
 import { renderHook, act } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { useHighlights } from "./useHighlights";
+import { errAsync, okAsync, type Result } from "neverthrow";
+import { useHighlights, type DeleteHighlight } from "./useHighlights";
 import type { LoadBook } from "./useBook";
+import { ApiError } from "../lib/fetcher";
 import { SwrTestCache } from "../../test/swrTestCache";
 import type { BookDetail } from "../../shared/schemas/book";
 import type { CreatedSelection, SelectionHighlight } from "../../shared/schemas/selection";
@@ -58,6 +60,17 @@ function pausableLoader() {
       });
     },
   };
+}
+
+/** A deleter that accepts every removal and remembers what it was asked to drop. */
+function recordingDeleter() {
+  const deleted: [string, string][] = [];
+  const deleteHighlight: DeleteHighlight = (pdfId, selectionId) => {
+    deleted.push([pdfId, selectionId]);
+    return okAsync({ deleted: true as const });
+  };
+
+  return { deleteHighlight, deleted };
 }
 
 function renderForBook(pdfId: string, load: LoadBook) {
@@ -165,6 +178,63 @@ describe("useHighlights", () => {
       "#FFEB3B",
       "#FF9800",
     ]);
+  });
+
+  it("takes a highlight the reader deleted out of the list without re-reading the book", async () => {
+    const { load, calls, finish } = pausableLoader();
+    const { deleteHighlight, deleted } = recordingDeleter();
+    const view = renderHook(() => useHighlights(BOOK_A_ID, load, deleteHighlight), {
+      wrapper: ({ children }: { children: ReactNode }) => <SwrTestCache>{children}</SwrTestCache>,
+    });
+    const kept = highlight({ id: "a2", selectedText: "KV は結果整合です。" });
+    await finish(BOOK_A_ID, [highlight(), kept]);
+
+    await act(async () => {
+      await view.result.current.removeHighlight("a1");
+    });
+
+    expect(deleted).toStrictEqual([[BOOK_A_ID, "a1"]]);
+    expect(view.result.current.highlights).toStrictEqual([kept]);
+    expect(calls).toStrictEqual([BOOK_A_ID]);
+  });
+
+  it("takes a deleted highlight off the viewer as well as the chat panel", async () => {
+    const { load, finish } = pausableLoader();
+    const { deleteHighlight } = recordingDeleter();
+    const view = renderHook(
+      () => ({
+        viewer: useHighlights(BOOK_A_ID, load, deleteHighlight),
+        panel: useHighlights(BOOK_A_ID, load, deleteHighlight),
+      }),
+      {
+        wrapper: ({ children }: { children: ReactNode }) => <SwrTestCache>{children}</SwrTestCache>,
+      },
+    );
+    await finish(BOOK_A_ID, A_HIGHLIGHTS);
+
+    await act(async () => {
+      await view.result.current.panel.removeHighlight("a1");
+    });
+
+    expect(view.result.current.viewer.highlights).toStrictEqual([]);
+    expect(view.result.current.panel.highlights).toStrictEqual([]);
+  });
+
+  it("keeps the highlight and hands back the reason when the server refuses to delete it", async () => {
+    const { load, finish } = pausableLoader();
+    const refusal = new ApiError("Unexpected server error", "INTERNAL_ERROR", 500);
+    const view = renderHook(() => useHighlights(BOOK_A_ID, load, () => errAsync(refusal)), {
+      wrapper: ({ children }: { children: ReactNode }) => <SwrTestCache>{children}</SwrTestCache>,
+    });
+    await finish(BOOK_A_ID, A_HIGHLIGHTS);
+
+    let removal: Result<void, ApiError> | undefined;
+    await act(async () => {
+      removal = await view.result.current.removeHighlight("a1");
+    });
+
+    expect(removal?.isErr() && removal.error).toBe(refusal);
+    expect(view.result.current.highlights).toStrictEqual(A_HIGHLIGHTS);
   });
 
   it("has no highlights to show before a book is open", () => {

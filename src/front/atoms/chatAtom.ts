@@ -69,3 +69,22 @@ export const abortChatStreamAtom = atom(null, (get, set) => {
   set(isStreamingAtom, false);
   set(streamingContentAtom, "");
 });
+
+/**
+ * Leave the chat of a highlight the server has just dropped.
+ *
+ * Written as an atom rather than a check inside whoever asked for the deletion,
+ * because the reader can open a chat while the request is in flight: a handler
+ * comparing the selection it captured when it rendered would be looking at a
+ * chat that has since been replaced. Reading the store as the answer lands is
+ * the only way to see which chat is open by then.
+ *
+ * Emptying `activeSelectionAtom` is also what takes `?selection=` out of the
+ * address and off the reading position, since both follow this atom.
+ */
+export const selectionDeletedAtom = atom(null, (get, set, deletedId: string) => {
+  if (get(activeSelectionAtom)?.id !== deletedId) return;
+
+  set(abortChatStreamAtom);
+  set(activeSelectionAtom, null);
+});
