@@ -59,3 +59,22 @@ export const createdSelectionSchema = z.object({
 export type CreatedSelection = z.infer<typeof createdSelectionSchema>;
 
 export const selectionDeletedSchema = z.object({ deleted: z.literal(true) });
+
+/** Long enough for a sentence a reader pastes back in, short enough to bound the LIKE. */
+export const MAX_SEARCH_QUERY_LENGTH = 200;
+
+export const selectionSearchQuerySchema = z.object({
+  q: z.string().min(1).max(MAX_SEARCH_QUERY_LENGTH),
+});
+
+/**
+ * Which highlights the search matched, by id alone.
+ *
+ * The list already holds the highlights themselves, read from the book; sending
+ * them again would put the same data in two places and let the two disagree.
+ */
+export const selectionSearchResultSchema = z.object({
+  selectionIds: z.array(z.string()),
+});
+
+export type SelectionSearchResult = z.infer<typeof selectionSearchResultSchema>;

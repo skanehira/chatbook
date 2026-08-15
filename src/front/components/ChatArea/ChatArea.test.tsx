@@ -22,6 +22,7 @@ import type { SelectionHighlight } from "../../../shared/schemas/selection";
 import type { BookDetail } from "../../../shared/schemas/book";
 import { bookKey } from "../../hooks/useBook";
 import type { DeleteHighlight } from "../../hooks/useHighlights";
+import type { SearchSelections } from "../../hooks/useHighlightSearch";
 import { SwrTestCache } from "../../../test/swrTestCache";
 
 const SELECTED_TEXT = "エッジはサーバーレス実行基盤で、実行単位をまたいでメモリを共有できません。";
@@ -74,6 +75,8 @@ function renderChat(
     messages?: { id: string; role: "user" | "assistant"; content: string; createdAt: string }[];
     /** Stands in for the delete endpoint the list reaches for. */
     deleteHighlight?: DeleteHighlight;
+    /** Stands in for the search endpoint, which looks through the chats too. */
+    searchHighlights?: SearchSelections;
   } = {},
 ) {
   const {
@@ -81,6 +84,7 @@ function renderChat(
     bookError,
     messages = [],
     deleteHighlight,
+    searchHighlights,
   } = options;
   const book = bookError ? undefined : BOOK;
   const store = createStore();
@@ -104,6 +108,7 @@ function renderChat(
           onSelectionClick={(selection) => opened.push(selection)}
           readQuote={() => selected}
           deleteHighlight={deleteHighlight}
+          searchHighlights={searchHighlights}
         />
       </Provider>
     </SwrTestCache>,
@@ -214,6 +219,26 @@ describe("ChatArea", () => {
     await userEvent.click(screen.getByText(OTHER_TEXT));
 
     expect(opened).toStrictEqual([{ id: "s2", selectedText: OTHER_TEXT, pageNumber: 7 }]);
+  });
+
+  it("narrows the list to what the server says holds the query, chats included", async () => {
+    const asked: string[] = [];
+    renderChat({
+      activeSelection: null,
+      // The chats are not in the book, so only the server can say that this
+      // passage's conversation mentions it.
+      searchHighlights: (_pdfId, query) => {
+        asked.push(query);
+        return Promise.resolve({ selectionIds: ["s2"] });
+      },
+    });
+
+    await userEvent.type(screen.getByLabelText("ハイライトを検索"), "集約");
+
+    await waitFor(() => expect(screen.getByText("ハイライト 2件中 1件")).toBeInTheDocument());
+    expect(screen.getByText(OTHER_TEXT)).toBeInTheDocument();
+    expect(screen.queryByText(SELECTED_TEXT)).toBeNull();
+    expect(asked).toStrictEqual(["集約"]);
   });
 
   it("takes a deleted highlight out of the list the book shares with the viewer", async () => {

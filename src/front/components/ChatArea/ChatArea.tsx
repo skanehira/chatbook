@@ -17,6 +17,7 @@ import { HighlightListPanel } from "./HighlightListPanel";
 import { useWebSearchAtom } from "../../atoms/settingsAtom";
 import { useChatStream } from "../../hooks/useChatStream";
 import { useHighlights, type DeleteHighlight } from "../../hooks/useHighlights";
+import { useHighlightSearch, type SearchSelections } from "../../hooks/useHighlightSearch";
 import { formatQuotedQuestion } from "../../lib/quotedQuestion";
 import type { ReadChatQuote } from "../../lib/chatQuoteSelection";
 
@@ -30,6 +31,8 @@ interface ChatAreaProps {
   readQuote?: ReadChatQuote;
   /** Removes a highlight; injectable so tests can record or refuse one. */
   deleteHighlight?: DeleteHighlight;
+  /** Searches the highlights and their chats; injectable for the same reason. */
+  searchHighlights?: SearchSelections;
 }
 
 /** A failure worded for the reader, in the one place the panel shows them. */
@@ -47,9 +50,14 @@ export function ChatArea({
   onSelectionClick,
   readQuote,
   deleteHighlight,
+  searchHighlights,
 }: ChatAreaProps) {
   const [activeSelection, setActiveSelection] = useAtom(activeSelectionAtom);
   const { highlights, removeHighlight } = useHighlights(book?.id, undefined, deleteHighlight);
+  const { query, setQuery, matchedIds, searchError } = useHighlightSearch(
+    book?.id,
+    searchHighlights,
+  );
   const selectionDeleted = useSetAtom(selectionDeletedAtom);
   const messages = useAtomValue(chatMessagesAtom);
   const streamingContent = useAtomValue(streamingContentAtom);
@@ -104,7 +112,11 @@ export function ChatArea({
   if (!activeSelection) {
     return (
       <HighlightListPanel
-        highlights={highlights}
+        highlights={matchedIds ? highlights.filter((h) => matchedIds.has(h.id)) : highlights}
+        total={highlights.length}
+        query={query}
+        onQueryChange={setQuery}
+        searchError={searchError}
         onSelect={onSelectionClick}
         // Leaving the chat is the store's to decide once the server answers:
         // the reader can have opened one while the request was in flight.

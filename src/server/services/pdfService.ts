@@ -283,6 +283,58 @@ function readPositionData(stored: string): PositionData {
 }
 
 /**
+ * The book's highlights whose passage, or whose chat, holds `query`.
+ *
+ * One statement rather than two searches merged afterwards: a highlight matched
+ * by both would otherwise have to be de-duplicated, and the two halves could
+ * land at different times.
+ */
+export function searchSelections(
+  db: D1Database,
+  pdfId: string,
+  query: string,
+): ResultAsync<string[], ServiceError> {
+  return ResultAsync.fromPromise(findSelections(db, pdfId, query), storageFailure).andThen(
+    (found) => (found ? ok(found) : err(notFound())),
+  );
+}
+
+/**
+ * `%` and `_` are LIKE's own; a reader typing one means the character.
+ *
+ * Without this a search for "%" answers with the whole book — which reads as
+ * the search being broken rather than as a wildcard being honoured.
+ */
+function likeContaining(query: string): string {
+  return `%${query.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+}
+
+async function findSelections(
+  db: D1Database,
+  pdfId: string,
+  query: string,
+): Promise<string[] | null> {
+  const d1Db = drizzle(db);
+  const book = await d1Db.select({ id: pdfs.id }).from(pdfs).where(eq(pdfs.id, pdfId)).get();
+  if (!book) return null;
+
+  const needle = likeContaining(query);
+  const rows = await db
+    .prepare(
+      `SELECT s.id FROM selections s
+       WHERE s.pdf_id = ?1
+         AND (s.selected_text LIKE ?2 ESCAPE '\\'
+              OR EXISTS (SELECT 1 FROM chat_messages m
+                         WHERE m.selection_id = s.id AND m.content LIKE ?2 ESCAPE '\\'))
+       ORDER BY s.created_at DESC`,
+    )
+    .bind(pdfId, needle)
+    .all<{ id: string }>();
+
+  return rows.results.map((row) => row.id);
+}
+
+/**
  * Get a PDF record by id, including its selections.
  */
 export function getPdf(db: D1Database, bucket: R2Bucket, pdfId: string) {

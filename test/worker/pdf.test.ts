@@ -935,6 +935,120 @@ describe("DELETE /api/pdf/:pdfId/selections/:selId", () => {
   });
 });
 
+describe("GET /api/pdf/:pdfId/search", () => {
+  /**
+   * A book with two highlights: the first names Workers in the passage itself,
+   * the second only in the answer saved against it.
+   */
+  async function bookWithSearchableChats(tag: string) {
+    const book = await uploadBook({ tag, fileName: `${tag}.pdf` });
+    const inPassage = (await (
+      await postSelection(book.id, {
+        selectedText: "Workers はリクエストごとに分離されます",
+        pageNumber: 1,
+        positionData: { rects: [{ x: 0, y: 0, width: 10, height: 10 }] },
+      })
+    ).json()) as { id: string };
+    const inAnswer = (await (
+      await postSelection(book.id, {
+        selectedText: "エッジは実行単位をまたげません",
+        pageNumber: 2,
+        positionData: { rects: [{ x: 0, y: 0, width: 10, height: 10 }] },
+      })
+    ).json()) as { id: string };
+
+    await env.DB.prepare(
+      "INSERT INTO chat_messages (id, selection_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+      .bind(
+        `msg-${tag}`,
+        inAnswer.id,
+        "assistant",
+        "状態を持てないのは Workers が毎回別のインスタンスになるためです",
+        "2026-01-01T00:00:00Z",
+      )
+      .run();
+
+    return { book, inPassage: inPassage.id, inAnswer: inAnswer.id };
+  }
+
+  async function search(pdfId: string, q: string) {
+    return apiFetch(`https://example.com/api/pdf/${pdfId}/search?q=${encodeURIComponent(q)}`);
+  }
+
+  it("finds a highlight by the passage the reader marked", async () => {
+    const { book, inPassage } = await bookWithSearchableChats("search-passage");
+
+    const response = await search(book.id, "リクエストごと");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toStrictEqual({ selectionIds: [inPassage] });
+  });
+
+  it("finds a highlight by what was said in its chat, not just the passage", async () => {
+    const { book, inAnswer } = await bookWithSearchableChats("search-chat");
+
+    const response = await search(book.id, "毎回別のインスタンス");
+
+    expect(await response.json()).toStrictEqual({ selectionIds: [inAnswer] });
+  });
+
+  it("names a highlight once when the query is in both its passage and its chat", async () => {
+    const { book, inPassage, inAnswer } = await bookWithSearchableChats("search-both");
+
+    const response = await search(book.id, "Workers");
+
+    const { selectionIds } = (await response.json()) as { selectionIds: string[] };
+    expect(selectionIds.toSorted()).toStrictEqual([inPassage, inAnswer].toSorted());
+  });
+
+  it("finds nothing for a query that is in neither", async () => {
+    const { book } = await bookWithSearchableChats("search-miss");
+
+    expect(await (await search(book.id, "みつからない語")).json()).toStrictEqual({
+      selectionIds: [],
+    });
+  });
+
+  it("leaves another book's highlights out of the answer", async () => {
+    const { book } = await bookWithSearchableChats("search-scope-a");
+    const other = await uploadBook({ tag: "search-scope-b", fileName: "search-scope-b.pdf" });
+    await postSelection(other.id, {
+      selectedText: "Workers はこちらの本にもあります",
+      pageNumber: 1,
+      positionData: { rects: [{ x: 0, y: 0, width: 10, height: 10 }] },
+    });
+
+    const { selectionIds } = (await (await search(book.id, "Workers")).json()) as {
+      selectionIds: string[];
+    };
+
+    expect(selectionIds).toHaveLength(2);
+  });
+
+  it("treats a percent sign as a character to look for, not as a wildcard", async () => {
+    // Passed straight into LIKE it would match every highlight in the book.
+    const { book } = await bookWithSearchableChats("search-wildcard");
+
+    expect(await (await search(book.id, "%")).json()).toStrictEqual({ selectionIds: [] });
+  });
+
+  it("refuses a search of a book that is not there", async () => {
+    const response = await search("no-such-book", "Workers");
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toStrictEqual({
+      error: { code: "PDF_NOT_FOUND", message: "PDF not found" },
+    });
+  });
+
+  it("refuses an empty query rather than answering with the whole book", async () => {
+    const { book } = await bookWithSearchableChats("search-empty");
+
+    expect((await search(book.id, "")).status).toBe(400);
+  });
+});
+
 describe("GET /api/pdf/:pdfId highlight geometry", () => {
   it("still serves a book whose stored positionData cannot be read", async () => {
     const book = await uploadBook({ tag: "sel-unreadable", fileName: "sel-unreadable.pdf" });

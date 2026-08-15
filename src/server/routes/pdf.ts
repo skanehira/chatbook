@@ -9,6 +9,7 @@ import {
   listPdfs,
   deletePdf,
   saveReadingState,
+  searchSelections,
   thumbnailObjectKey,
   THUMBNAIL_CONTENT_TYPE,
   systemIdClock,
@@ -29,7 +30,10 @@ import {
   readCitations,
 } from "../services/chatService";
 import { locateQuerySchema, saveReadingStateRequestSchema } from "../../shared/schemas/book";
-import { createSelectionRequestSchema } from "../../shared/schemas/selection";
+import {
+  createSelectionRequestSchema,
+  selectionSearchQuerySchema,
+} from "../../shared/schemas/selection";
 import { sendChatRequestSchema } from "../../shared/schemas/chat";
 import type { ErrorCode, ErrorPayload } from "../../shared/schemas/error";
 import { storageFailure, type ServiceError } from "../services/serviceError";
@@ -337,6 +341,21 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
         if (!("body" in object)) return new Response(null, { status: 304, headers });
 
         return new Response(object.body, { headers });
+      })
+      // Narrows the highlight list by what was marked and what was said about
+      // it. The chats are not in the book the list was drawn from, so this is
+      // the only place both can be looked through at once.
+      .get("/pdf/:pdfId/search", validate("query", selectionSearchQuerySchema), async (c) => {
+        const found = await searchSelections(
+          c.env.DB,
+          c.req.param("pdfId"),
+          c.req.valid("query").q,
+        );
+
+        return found.match(
+          (selectionIds) => c.json({ selectionIds }),
+          (failure) => serviceFailureResponse(c, failure, PDF_NOT_FOUND),
+        );
       })
       // Resolves a passage from a `#:~:text=` link to the page that holds it. The
       // browser cannot do this itself here: the page is only in the DOM once the

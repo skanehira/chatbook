@@ -1421,6 +1421,48 @@ test("the chat panel lists the highlights, opens one, and comes back to the list
   await expect(chatPanel.getByPlaceholder("質問を入力...")).toBeHidden();
 });
 
+test("searching the list narrows it to what the server matched", async ({ page }) => {
+  // The chats are searched too, but only the server can see them: an answer
+  // cannot be saved from here without a live model, so the passage is what this
+  // one types. What it does prove is that the box reaches the server at all —
+  // `test/worker/pdf.test.ts` covers the chat half of the same query.
+  const pdfId = await openTestBook(page);
+  const wanted = pageText(2).body[0];
+  const other = pageText(3).body[0];
+  for (const [passage, pageNumber] of [
+    [wanted, 2],
+    [other, 3],
+  ] as const) {
+    await page.request.post(`/api/pdf/${pdfId}/selections`, {
+      data: {
+        selectedText: passage,
+        pageNumber,
+        positionData: {
+          startIndex: 0,
+          endIndex: passage.length,
+          rects: [{ x: 40, y: 40, width: 160, height: 24 }],
+        },
+      },
+    });
+  }
+  await page.reload();
+
+  const chatPanel = page.locator("main > div").last();
+  await expect(chatPanel.getByText("ハイライト 2件", { exact: true })).toBeVisible({
+    timeout: 60000,
+  });
+
+  await chatPanel.getByLabel("ハイライトを検索").fill(wanted.slice(0, 6));
+
+  await expect(chatPanel.getByText("ハイライト 2件中 1件", { exact: true })).toBeVisible();
+  await expect(chatPanel.getByText(wanted, { exact: true })).toBeVisible();
+  await expect(chatPanel.getByText(other, { exact: true })).toBeHidden();
+
+  // Clearing the box gives the whole list back rather than leaving it narrowed
+  await chatPanel.getByLabel("ハイライトを検索").fill("");
+  await expect(chatPanel.getByText("ハイライト 2件", { exact: true })).toBeVisible();
+});
+
 test("a highlight deleted from the list stays gone after a reload", async ({ page }) => {
   const pdfId = await openTestBook(page);
   const doomedPassage = pageText(2).body[0];

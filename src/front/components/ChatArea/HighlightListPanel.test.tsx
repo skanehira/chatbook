@@ -32,23 +32,32 @@ const NEWER: HighlightListItem = {
 
 const ACCEPTS_EVERY_DELETION = () => okAsync(undefined);
 
-interface PanelHandlers {
+interface PanelOverrides {
   onSelect?: (selection: ActiveSelection) => void;
   onDelete?: (selectionId: string) => ResultAsync<void, ApiError>;
+  /** The narrowed list, when the test is standing in for a running search. */
+  shown?: HighlightListItem[];
+  query?: string;
+  onQueryChange?: (query: string) => void;
+  searchError?: string;
 }
 
-function panel(highlights: HighlightListItem[], handlers: PanelHandlers = {}) {
+function panel(highlights: HighlightListItem[], overrides: PanelOverrides = {}) {
   return (
     <HighlightListPanel
-      highlights={highlights}
-      onSelect={handlers.onSelect ?? (() => {})}
-      onDelete={handlers.onDelete ?? ACCEPTS_EVERY_DELETION}
+      highlights={overrides.shown ?? highlights}
+      total={highlights.length}
+      query={overrides.query ?? ""}
+      onQueryChange={overrides.onQueryChange ?? (() => {})}
+      searchError={overrides.searchError}
+      onSelect={overrides.onSelect ?? (() => {})}
+      onDelete={overrides.onDelete ?? ACCEPTS_EVERY_DELETION}
     />
   );
 }
 
-function renderPanel(highlights: HighlightListItem[], handlers: PanelHandlers = {}) {
-  return render(panel(highlights, handlers));
+function renderPanel(highlights: HighlightListItem[], overrides: PanelOverrides = {}) {
+  return render(panel(highlights, overrides));
 }
 
 /** The delete button of one row, told apart from the row's own button. */
@@ -96,23 +105,27 @@ describe("HighlightListPanel", () => {
     expect(screen.getByText("PDF内のテキストを選択して質問してください")).toBeInTheDocument();
   });
 
-  it("narrows the list to the passages holding what the reader typed", async () => {
-    renderPanel([OLDER, MIDDLE, NEWER]);
+  it("passes what the reader types to whoever runs the search", async () => {
+    // The box is controlled by the searcher, so what arrives here is each
+    // keystroke against the query it was given rather than a growing string.
+    const typed: string[] = [];
+    renderPanel([OLDER, MIDDLE, NEWER], { onQueryChange: (q) => typed.push(q) });
 
-    await userEvent.type(screen.getByLabelText("ハイライトを検索"), "結果整合");
+    await userEvent.type(screen.getByLabelText("ハイライトを検索"), "結");
+
+    expect(typed).toStrictEqual(["結"]);
+  });
+
+  it("counts what the search left against the whole book", () => {
+    renderPanel([OLDER, MIDDLE, NEWER], { query: "結果整合", shown: [MIDDLE] });
 
     expect(screen.getByText("ハイライト 3件中 1件")).toBeInTheDocument();
     expect(screen.getByText(MIDDLE.selectedText)).toBeInTheDocument();
     expect(screen.queryByText(OLDER.selectedText)).not.toBeInTheDocument();
-    expect(screen.queryByText(NEWER.selectedText)).not.toBeInTheDocument();
   });
 
-  it("puts every highlight back once the query is cleared", async () => {
-    renderPanel([OLDER, MIDDLE, NEWER]);
-    const search = screen.getByLabelText("ハイライトを検索");
-
-    await userEvent.type(search, "結果整合");
-    await userEvent.clear(search);
+  it("counts the whole book again once nothing is being searched for", () => {
+    renderPanel([OLDER, MIDDLE, NEWER], { query: "" });
 
     expect(screen.getByText("ハイライト 3件")).toBeInTheDocument();
     expect(screen.getByText(OLDER.selectedText)).toBeInTheDocument();
@@ -120,40 +133,24 @@ describe("HighlightListPanel", () => {
     expect(screen.getByText(NEWER.selectedText)).toBeInTheDocument();
   });
 
-  it("narrows the list to the highlights sitting inside the page range", async () => {
-    renderPanel([OLDER, MIDDLE, NEWER]);
-
-    await userEvent.type(screen.getByLabelText("開始ページ"), "40");
-    await userEvent.type(screen.getByLabelText("終了ページ"), "50");
-
-    expect(screen.getByText("ハイライト 3件中 1件")).toBeInTheDocument();
-    expect(screen.getByText(OLDER.selectedText)).toBeInTheDocument();
-    expect(screen.queryByText(MIDDLE.selectedText)).not.toBeInTheDocument();
-    expect(screen.queryByText(NEWER.selectedText)).not.toBeInTheDocument();
-  });
-
-  it("narrows by the query and the page range at once", async () => {
-    renderPanel([OLDER, MIDDLE, NEWER]);
-
-    // "ます" is in the two newer passages, page 40 on holds the two older ones,
-    // so only the highlight in both is left.
-    await userEvent.type(screen.getByLabelText("ハイライトを検索"), "ます");
-    await userEvent.type(screen.getByLabelText("開始ページ"), "40");
-
-    expect(screen.getByText("ハイライト 3件中 1件")).toBeInTheDocument();
-    expect(screen.getByText(MIDDLE.selectedText)).toBeInTheDocument();
-    expect(screen.queryByText(OLDER.selectedText)).not.toBeInTheDocument();
-    expect(screen.queryByText(NEWER.selectedText)).not.toBeInTheDocument();
-  });
-
-  it("says nothing matched but keeps the boxes, so the search can be widened again", async () => {
-    renderPanel([OLDER, MIDDLE, NEWER]);
-
-    await userEvent.type(screen.getByLabelText("ハイライトを検索"), "みつからない語");
+  it("says nothing matched but keeps the box, so the search can be widened again", () => {
+    renderPanel([OLDER, MIDDLE, NEWER], { query: "みつからない語", shown: [] });
 
     expect(screen.getByText("一致するハイライトがありません")).toBeInTheDocument();
     expect(screen.getByText("ハイライト 3件中 0件")).toBeInTheDocument();
     expect(screen.getByLabelText("ハイライトを検索")).toHaveValue("みつからない語");
+  });
+
+  it("says why the search did not happen, without hiding the highlights over it", () => {
+    renderPanel([OLDER, MIDDLE, NEWER], {
+      query: "結果整合",
+      searchError: "Unexpected server error",
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "検索に失敗しました: Unexpected server error",
+    );
+    expect(screen.getByText(OLDER.selectedText)).toBeInTheDocument();
   });
 
   it("asks before deleting, saying the chat goes with the highlight", async () => {
@@ -225,21 +222,6 @@ describe("HighlightListPanel", () => {
 
     expect(screen.getByRole("alertdialog", { name: "ハイライトの削除" })).toBeInTheDocument();
     expect(selected).toStrictEqual([]);
-  });
-
-  it("keeps the list narrowed after a highlight is deleted out of it", async () => {
-    const view = renderPanel([OLDER, MIDDLE, NEWER]);
-    await userEvent.type(screen.getByLabelText("ハイライトを検索"), "結果整合");
-
-    await userEvent.click(deleteButtonOf(MIDDLE));
-    await userEvent.click(screen.getByRole("button", { name: "削除する" }));
-    // The list itself is the book's to update, so the shorter one arrives as a
-    // new prop — what the panel has to hold on to is the reader's narrowing.
-    view.rerender(panel([OLDER, NEWER]));
-
-    expect(screen.getByLabelText("ハイライトを検索")).toHaveValue("結果整合");
-    expect(screen.getByText("ハイライト 2件中 0件")).toBeInTheDocument();
-    expect(screen.getByText("一致するハイライトがありません")).toBeInTheDocument();
   });
 
   it("names the passage in each delete button, cut short when the passage runs long", () => {
