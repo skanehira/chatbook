@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { useNavigate } from "react-router";
 import useSWR from "swr";
 import type { ResultAsync } from "neverthrow";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { FileSelector } from "../components/PdfViewer/FileSelector";
 import { fetcher, resultFetcher, type ApiError } from "../lib/fetcher";
 import type { ExtractedPdfData } from "../lib/pdfLoader";
@@ -87,58 +88,6 @@ function BookCard({
   );
 }
 
-function DeleteConfirmDialog({
-  book,
-  onConfirm,
-  onCancel,
-}: {
-  book: BookSummary;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    // Escape is handled here rather than on document, so the listener lives and
-    // dies with the dialog itself.
-    <div
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onCancel();
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onCancel();
-      }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-    >
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        aria-label="本の削除"
-        className="w-full max-w-sm rounded-lg bg-white p-5 shadow-xl"
-      >
-        <p className="text-sm text-gray-800">
-          「{bookTitle(book.fileName)}」を削除しますか？ハイライトとチャット履歴も削除されます。
-        </p>
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            autoFocus
-            onClick={onCancel}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 cursor-pointer hover:bg-gray-50"
-          >
-            キャンセル
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white cursor-pointer hover:bg-red-700"
-          >
-            削除する
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function ShelfPage({
   loadBooks = fetchBooks,
   deleteBook = requestBookDeletion,
@@ -213,8 +162,10 @@ export function ShelfPage({
       </main>
 
       {bookPendingDeletion && (
-        <DeleteConfirmDialog
-          book={bookPendingDeletion}
+        <ConfirmDialog
+          message={`「${bookTitle(bookPendingDeletion.fileName)}」を削除しますか？ハイライトとチャット履歴も削除されます。`}
+          dialogLabel="本の削除"
+          confirmLabel="削除する"
           onConfirm={() => removeBook(bookPendingDeletion)}
           onCancel={() => setBookPendingDeletion(null)}
         />
