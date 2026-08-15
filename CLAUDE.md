@@ -281,8 +281,9 @@ union + `satisfies` で固定する。
 - **失敗を画面に出す mutation とイベントハンドラ起点の 1 回きりの取得は `resultFetcher`**
   （`ResultAsync<T, ApiError>`）。受け皿になる SWR が無いので、失敗は値で返さないと消える。
   現在の該当箇所は本の削除（`ShelfPage`）・アップロード（`FileSelector`）・ハイライトの作成
-  （`useAskAboutSelection`）・チャット履歴の取得（`AppPage`）・読書位置の保存
-  （`useReadingStateSync`）・ログイン（`RequireSession`）・ログアウト（`SettingsMenu`）の 7 つ。
+  （`useAskAboutSelection`）・ハイライトの削除（`useHighlights`）・チャット履歴の取得
+  （`AppPage`）・読書位置の保存（`useReadingStateSync`）・ログイン（`RequireSession`）・
+  ログアウト（`SettingsMenu`）の 8 つ。
   **例外は `usePdfDocument.ts` の `storeCoverIfMissing`** で、これは失敗を出さないと決めた
   書き込み（下記「意図的に握りつぶす」）なので `fetcher` + try/catch のままでよい
 - **`ApiError` の `kind`** は `http`（サーバが拒否した）/ `parse`（返ってきた形が違う）/
@@ -311,6 +312,7 @@ union + `satisfies` で固定する。
 | ページの描画                      | `PdfPage` の `onError` → `PdfViewer` の `renderError` | ビューア上部（ページを移ると消える）                                             |
 | 目次の取得                        | `usePdfOutline` の `error`                            | 目次パネル                                                                       |
 | ハイライトの保存                  | `useAskAboutSelection` の `saveError`                 | ビューア上部（ポップオーバーは開いたまま。狭い画面では質問の入力欄が開いたまま） |
+| ハイライトの削除                  | `HighlightListPanel` の `actionError`                 | ハイライト一覧の絞り込み行の下（次の削除で消える。下記の例外あり）               |
 | チャットの送信・履歴の取得        | `chatErrorAtom`                                       | チャットパネル（狭い画面ではシート）                                             |
 | リンク先の passage が見つからない | `useReadingLocation` の `passageMiss`                 | ヘッダ直下の帯                                                                   |
 | 読書位置の保存                    | `useReadingStateSync` の `saveError`                  | ヘッダ直下の帯                                                                   |
@@ -322,20 +324,21 @@ union + `satisfies` で固定する。
 
 #### 意図的に握りつぶす
 
-次の 9 箇所は失敗を画面に出さない。いずれも理由をコメントに書いてあり、**理由を書かずに
-握りつぶしを増やさないこと**:
+次の 10 行は失敗を画面に出さない（最後の 1 つだけは、出す場所が残っていれば出す）。いずれも
+理由をコメントに書いてあり、**理由を書かずに握りつぶしを増やさないこと**:
 
-| 箇所                                                         | 握りつぶす理由                                                       |
-| ------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `pdfLoader.ts` の表紙生成 / `usePdfDocument.ts` の後追い保存 | 表紙は装飾。本棚がタイトルで代替する                                 |
-| `sseParser.ts` / `llmService.ts` の断片パース                | ストリームの 1 ブロックが壊れても残りは使える                        |
-| `routes/pdf.ts` のクライアント切断後の送信                   | throw を通すと回答の保存に届かない                                   |
-| `pdfService.ts` の `readPositionData`                        | 壊れた 1 行で本ごと開けなくしない（下記「`positionData` の正準形」） |
-| `chatService.ts` の `readCitations`                          | 出典が読めなくても回答そのものは見せる                               |
-| `textFragment.ts` のリンク解析                               | 解析できない = passage へのリンクではない、という正常系              |
-| `usePdfOutline.ts` の `resolvePageNumber`                    | dest が解けない 1 項目はページ無しで並べ、残りは使える               |
-| `useReadingStateSync.ts` の離脱時の flush                    | 送る先の画面がもう無い（本棚へ戻る・タブを閉じる）                   |
-| `useServerConfig.ts` の取得失敗                              | Web 検索は「あり」と仮定して進む。送ってもサーバが落とす             |
+| 箇所                                                         | 握りつぶす理由                                                                                                   |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `pdfLoader.ts` の表紙生成 / `usePdfDocument.ts` の後追い保存 | 表紙は装飾。本棚がタイトルで代替する                                                                             |
+| `sseParser.ts` / `llmService.ts` の断片パース                | ストリームの 1 ブロックが壊れても残りは使える                                                                    |
+| `routes/pdf.ts` のクライアント切断後の送信                   | throw を通すと回答の保存に届かない                                                                               |
+| `pdfService.ts` の `readPositionData`                        | 壊れた 1 行で本ごと開けなくしない（下記「`positionData` の正準形」）                                             |
+| `chatService.ts` の `readCitations`                          | 出典が読めなくても回答そのものは見せる                                                                           |
+| `textFragment.ts` のリンク解析                               | 解析できない = passage へのリンクではない、という正常系                                                          |
+| `usePdfOutline.ts` の `resolvePageNumber`                    | dest が解けない 1 項目はページ無しで並べ、残りは使える                                                           |
+| `useReadingStateSync.ts` の離脱時の flush                    | 送る先の画面がもう無い（本棚へ戻る・タブを閉じる）                                                               |
+| `HighlightListPanel.tsx` の削除失敗（一覧を離れていたとき）  | 出す場所がもう無い（チャットを開くと一覧ごと畳まれる）。消えなかったハイライトはそこに在るので、戻れば試し直せる |
+| `useServerConfig.ts` の取得失敗                              | Web 検索は「あり」と仮定して進む。送ってもサーバが落とす                                                         |
 
 **報告しないためではなく報告する主体が別**という catch が 2 つある。`SelectionPopover` の
 `onSubmit` を囲むもの（質問の失敗は `useAskAboutSelection` が受け持つ。ここで再 throw すると
@@ -761,6 +764,70 @@ move より前にスクロールへ吸われる。**44 は `HANDLE_WIDTH` 1 箇�
 モックは操作感を詰めるために作った参考物。テストの書き方は下記「jsdom に無いものは
 `src/test/setup.ts` が埋める」の `setViewportWidth` を使う。
 
+#### ハイライト一覧は絞り込みと削除を自分で持つ
+
+一覧（`src/front/components/ChatArea/HighlightListPanel.tsx`）は**データ源を読まない
+props のコンポーネントのまま**で、絞り込みの入力値・削除ダイアログの開閉・直近の削除失敗
+（`actionError`）をローカル state に持つ。**絞り込みの算術は
+`src/front/lib/highlightFilter.ts`**（`filterHighlights` と、入力欄の文字列を境界値に直す
+`parsePageBound`）にあり、DOM を知らないので `highlightFilter.test.ts` が単体で持つ。
+
+**削除の受け口は `DELETE /api/pdf/:pdfId/selections/:selId`**（`src/server/routes/pdf.ts`）。
+ここは **service を挟まない唯一の削除**で、`pdfService` の `ResultAsync` も
+`serviceFailureResponse` も通らず route が drizzle を直に叩く。**無い id も成功で返す**
+（404 にしない。E2E が本のハイライトを掃除するのにこの冪等性を使っている）ので、画面に出る
+削除の失敗は回線断か 500 だけ。チャットは D1 の `ON DELETE CASCADE` が落とす。
+前後の形は `src/shared/schemas/selection.ts` の `selectionDeletedSchema`。
+
+- 軸は**本文の部分一致とページ範囲の 2 つだけ**。色は絞り込みの軸にしていない——色を選ぶ
+  UI が無く、保存された行はすべて D1 の既定値（`#FFEB3B`）なので、分ける相手がいない
+- **入力は 1 行に収める**（軸を足すときも）。狭い画面では同じ一覧が `ChatSheet` の中に出て、
+  half（画面の 46%）だと縦が無い
+- **ページ範囲の入力は全角数字も受ける**（`parsePageBound` が半角へ畳む）。日本語の本を
+  読んでいる最中に IME を切らせないため。`Number` に丸投げしないのは、`0x10` を 16
+  ページと読むような解釈を避けるため（受けるのは数字だけ）
+- **絞り込んでいないときのヘッダは `ハイライト N件` のまま**。絞り込み中だけ
+  `ハイライト N件中 M件` に変える。どちらも E2E と jsdom が完全一致で照合している
+- **一致が 0 件でも入力欄は残す**（消すと絞り込みを解除する手段がなくなる）。本に
+  ハイライトが 1 つも無いときだけは、入力欄ごと出さずに始め方の案内を出す
+- **絞り込みはチャットを開くと消える**（パネルのローカル state なので、一覧が
+  `ChatArea` の分岐で unmount される）。持ち越したくなったら `ChatArea` へ持ち上げる
+- 削除は行の**外**に置いたボタンから（行全体が `<button>` なので、中に入れると
+  button の入れ子になる）。当たり判定は 44px 角（`h-11 w-11`。同じ一覧を電話が指で使う）。
+  **hover で出し入れしない**——上記「狭い画面のリーダーは 1 カラム」の入力の表が数え上げて
+  いる hover 分岐（`src/` に 2 箇所）を増やさないため。確認は
+  `src/front/components/ConfirmDialog.tsx`（本棚の削除と共用）で、**チャット履歴も
+  消えることを文面に書く**
+- **削除の失敗は絞り込み行の下に出る**。消えるのは**次の削除を実行したとき**だけで、
+  ダイアログをキャンセルしても残る。ただし読者がチャットを開いていれば一覧ごと消えている
+  ので届かない（上記「意図的に握りつぶす」）
+- **削除の答えが返るまでに読者が別の操作をしうる**。ダイアログを閉じてから待つので、その間に
+  PDF 上のハイライトをタップしてチャットが開くことがある。開いているチャットを畳む判断は
+  `selectionDeletedAtom`（`src/front/atoms/chatAtom.ts`）が**その時点の store を読んで**
+  行う——ハンドラの中で `activeSelection` を見るとレンダー時に捕まえた値（一覧が出ていた
+  ときの `null`）を読むので届かない。atom を空にすれば `?selection=` も読書位置も追従する。
+  配線は `ChatArea` の `onDelete`（`removeHighlight(book.id, id)` が成功したら
+  `selectionDeleted(id)` を撃つ。**本の id は hook に渡したものと同じでなければならない**
+  ——リクエストは引数の id へ飛ぶが、ハイライトが消えるのは hook の `pdfId` の一覧）
+
+**既知の割り切りが 1 つ**: 同じセッションで作ったハイライト（`addHighlight` が `color: ""`
+で先に置いた分）がある状態で古い行を削除すると、その色が 1 つずれる——パレットが配列の位置で
+決まるため。ページ上のハイライトも同じ配列を読むので同時に変わる。本を読み直せば既定値に
+戻り、色に意味を持たせていないので直していない。
+
+守っているテストは次のとおり。**狭い画面でこの UI を通る自動テストは無い**（`mobile` /
+`tablet` の E2E にも jsdom の `setViewportWidth` にも無いので、シートの中の見え方は手で見る）:
+
+| 何を                                     | どのテスト                                                                                                   |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 絞り込みの算術（境界・全角・AND）        | `src/front/lib/highlightFilter.test.ts`                                                                      |
+| 一覧の見え方・削除の確認と失敗表示       | `HighlightListPanel.test.tsx`                                                                                |
+| サーバが落とした分だけキャッシュから除く | `useHighlights.test.tsx`「takes a highlight the reader deleted out of the list without re-reading the book」 |
+| 失敗しても一覧に残す                     | 同「keeps the highlight and hands back the reason when the server refuses to delete it」                     |
+| 開いているチャットを畳む                 | `src/front/atoms/chatAtom.test.ts`「leaves the chat of a highlight that has just been deleted」              |
+| 待っている間に開かれたチャットを畳む     | `ChatArea.test.tsx`「leaves the chat a reader opened on a highlight while its deletion was in flight」       |
+| サーバから本当に消えている               | `e2e/chatbook.spec.ts`「a highlight deleted from the list stays gone after a reload」（desktop 1 本）        |
+
 #### リーダーの URL は `useReadingLocation` が単独で書く
 
 リロードと共有リンクで同じ状態に戻るよう、リーダーの状態は 2 つのクエリパラメータに
@@ -827,7 +894,9 @@ SWR の使い方で押さえるところ:
   1 回で済み、ハイライトの追加も全員に同時に映る。ハイライト一覧は
   `useHighlights` がこのエントリの `selections` から導出する（色のパレット補完込み）ので、
   **専用の atom を作らないこと**——SWR のキャッシュ自体が共有のグローバル state で、
-  atom と二重管理すると必ずずれる
+  atom と二重管理すると必ずずれる。**削除も同じキーを通す**（`removeHighlight`。
+  サーバが落としたものだけをキャッシュから除くので、一覧・ページ上のハイライト・
+  `PageToolbar` の件数が同時に追従する）
 - **本は props、ハイライトは購読**という線引きは意図的。本の見出し（id / fileName /
   pageCount）は開いている間変わらないので props で足りる。ハイライトは `PdfViewer` が
   足して `ChatArea` が一覧する——兄弟どうしが同じ更新を見る必要があるので、
@@ -848,13 +917,14 @@ SWR の使い方で押さえるところ:
   作り直せない**（別のオブジェクトは別の state になる）。jotai の
   `atomFamily` を使わないのは非推奨で本を開くたびに警告を出すため
 - **テストの差し替え口は 2 つある**。取得そのものを差し替えるなら DI 引数——
-  `useBook(pdfId, loadBook)` / `useHighlights(pdfId, loadBook)` /
+  `useBook(pdfId, loadBook)` / `useHighlights(pdfId, loadBook, deleteHighlight)` /
   `usePdfDocument(pdfId, book, fetchFn)` / `useChatStream(fetchFn, now)` /
   `useAskAboutSelection(addHighlight, saveSelection)` /
   `useReadingStateSync(pdfId, locationReady, save, debounceMs)`（**時間も DI**。テストは
   デバウンスを短くして偽タイマーで進める）/
   `ShelfPage({ loadBooks, deleteBook, extract })` / `FileSelector({ extract })` /
-  `PdfViewer({ measureSelection, saveSelection })` がその口。`measureSelection` は
+  `PdfViewer({ measureSelection, saveSelection })` /
+  `ChatArea({ readQuote, deleteHighlight })` がその口。`measureSelection` は
   ポップオーバーを開く唯一の入口で、**実 DOM 選択と pdf.js が描いたページを両方要求する
   経路（質問・保存失敗の表示・二重送信の防止）を jsdom で動かすための seam**。
   キャッシュの中身を用意したいなら `src/test/swrTestCache.tsx` の `SwrTestCache` で包む
