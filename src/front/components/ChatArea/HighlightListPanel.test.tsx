@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vite-plus/test";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { HighlightListPanel, type HighlightListItem } from "./HighlightListPanel";
@@ -35,10 +35,13 @@ const ACCEPTS_EVERY_DELETION = () => okAsync(undefined);
 interface PanelOverrides {
   onSelect?: (selection: ActiveSelection) => void;
   onDelete?: (selectionId: string) => ResultAsync<void, ApiError>;
-  /** The narrowed list, when the test is standing in for a running search. */
+  /** The narrowed list, when the test is standing in for a search that ran. */
   shown?: HighlightListItem[];
   query?: string;
   onQueryChange?: (query: string) => void;
+  onSearch?: () => void;
+  /** Whether a search has actually been run, as opposed to merely typed. */
+  searched?: boolean;
   searchError?: string;
 }
 
@@ -49,6 +52,8 @@ function panel(highlights: HighlightListItem[], overrides: PanelOverrides = {}) 
       total={highlights.length}
       query={overrides.query ?? ""}
       onQueryChange={overrides.onQueryChange ?? (() => {})}
+      onSearch={overrides.onSearch ?? (() => {})}
+      searched={overrides.searched ?? false}
       searchError={overrides.searchError}
       onSelect={overrides.onSelect ?? (() => {})}
       onDelete={overrides.onDelete ?? ACCEPTS_EVERY_DELETION}
@@ -116,8 +121,58 @@ describe("HighlightListPanel", () => {
     expect(typed).toStrictEqual(["結"]);
   });
 
+  it("searches nothing while the reader is still typing", async () => {
+    let searches = 0;
+    renderPanel([OLDER, MIDDLE, NEWER], { onSearch: () => (searches += 1) });
+
+    await userEvent.type(screen.getByLabelText("ハイライトを検索"), "結果整合");
+
+    expect(searches).toBe(0);
+    expect(screen.getByRole("button", { name: "検索" })).toBeInTheDocument();
+  });
+
+  it("runs the search when the button is pressed", async () => {
+    let searches = 0;
+    renderPanel([OLDER, MIDDLE, NEWER], { query: "結果整合", onSearch: () => (searches += 1) });
+
+    await userEvent.click(screen.getByRole("button", { name: "検索" }));
+
+    expect(searches).toBe(1);
+  });
+
+  it("runs the search on Enter, so the box can be used without the mouse", async () => {
+    let searches = 0;
+    renderPanel([OLDER, MIDDLE, NEWER], { query: "結果整合", onSearch: () => (searches += 1) });
+
+    await userEvent.type(screen.getByLabelText("ハイライトを検索"), "{Enter}");
+
+    expect(searches).toBe(1);
+  });
+
+  it("leaves the Enter that confirms a Japanese word to the IME", async () => {
+    // Enter mid-conversion picks the candidate; searching there would run on
+    // half a word every time a phrase is confirmed.
+    let searches = 0;
+    renderPanel([OLDER, MIDDLE, NEWER], { query: "結果整合", onSearch: () => (searches += 1) });
+    const box = screen.getByLabelText("ハイライトを検索");
+
+    box.focus();
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true, keyCode: 229 });
+
+    expect(searches).toBe(0);
+    expect(box).toHaveFocus();
+  });
+
+  it("counts the whole book until the search has actually been run", () => {
+    // Typing is not searching: the header must not claim a narrowing that the
+    // list has not been through yet.
+    renderPanel([OLDER, MIDDLE, NEWER], { query: "結果整合" });
+
+    expect(screen.getByText("ハイライト 3件")).toBeInTheDocument();
+  });
+
   it("counts what the search left against the whole book", () => {
-    renderPanel([OLDER, MIDDLE, NEWER], { query: "結果整合", shown: [MIDDLE] });
+    renderPanel([OLDER, MIDDLE, NEWER], { query: "結果整合", shown: [MIDDLE], searched: true });
 
     expect(screen.getByText("ハイライト 3件中 1件")).toBeInTheDocument();
     expect(screen.getByText(MIDDLE.selectedText)).toBeInTheDocument();
@@ -134,7 +189,7 @@ describe("HighlightListPanel", () => {
   });
 
   it("says nothing matched but keeps the box, so the search can be widened again", () => {
-    renderPanel([OLDER, MIDDLE, NEWER], { query: "みつからない語", shown: [] });
+    renderPanel([OLDER, MIDDLE, NEWER], { query: "みつからない語", shown: [], searched: true });
 
     expect(screen.getByText("一致するハイライトがありません")).toBeInTheDocument();
     expect(screen.getByText("ハイライト 3件中 0件")).toBeInTheDocument();

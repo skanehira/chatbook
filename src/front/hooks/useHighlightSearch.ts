@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import useSWR from "swr";
 import { fetcher } from "../lib/fetcher";
 import {
@@ -15,37 +15,27 @@ const searchKey = (pdfId: string, query: string) =>
 export const requestSelectionSearch: SearchSelections = (pdfId, query) =>
   fetcher(searchKey(pdfId, query), selectionSearchResultSchema);
 
-/** Long enough that a word is one search, short enough to feel like typing. */
-const SEARCH_DEBOUNCE_MS = 250;
-
 /**
  * What the reader is looking for, and which highlights hold it.
  *
  * The search is the server's because the chats are not in the book the list was
  * drawn from — only D1 can look through both at once. What comes back is a set
  * of ids, since the list already holds the highlights themselves.
+ *
+ * Nothing is asked of the server until `submit`: typing is not searching, and
+ * a round trip per keystroke would answer questions the reader is still in the
+ * middle of writing — a half-typed Japanese word most of all.
  */
 export function useHighlightSearch(
   pdfId: string | undefined,
   search: SearchSelections = requestSelectionSearch,
-  debounceMs: number = SEARCH_DEBOUNCE_MS,
 ) {
-  /** As typed, so the box never lags behind the reader. */
-  const [query, setQueryState] = useState("");
-  /** What has settled, and is worth a round trip. */
+  /** As typed, which is not yet what is being looked for. */
+  const [query, setQuery] = useState("");
+  /** What the reader last asked to be searched for. */
   const [term, setTerm] = useState("");
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // Debounced in the handler rather than in an effect: the timer belongs to the
-  // keystroke that started it, and there is no outside state to synchronise.
-  const setQuery = useCallback(
-    (next: string) => {
-      setQueryState(next);
-      clearTimeout(timer.current);
-      timer.current = setTimeout(() => setTerm(next.trim()), debounceMs);
-    },
-    [debounceMs],
-  );
+  const submit = useCallback(() => setTerm(query.trim()), [query]);
 
   const searching = pdfId !== undefined && term !== "";
   const { data, error, isLoading } = useSWR(
@@ -64,6 +54,8 @@ export function useHighlightSearch(
   return {
     query,
     setQuery,
+    /** Runs the search for whatever is in the box, clearing it if it is empty. */
+    submit,
     /** The ids that matched, or null while nothing is being searched for. */
     matchedIds,
     isSearching: isLoading,

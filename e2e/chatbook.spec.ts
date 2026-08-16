@@ -1452,15 +1452,27 @@ test("searching the list narrows it to what the server matched", async ({ page }
     timeout: 60000,
   });
 
+  // Typing is not searching: the list stays whole until the button is pressed
   await chatPanel.getByLabel("ハイライトを検索").fill(wanted.slice(0, 6));
+  await expect(chatPanel.getByText("ハイライト 2件", { exact: true })).toBeVisible();
+
+  await chatPanel.getByRole("button", { name: "検索" }).click();
 
   await expect(chatPanel.getByText("ハイライト 2件中 1件", { exact: true })).toBeVisible();
   await expect(chatPanel.getByText(wanted, { exact: true })).toBeVisible();
   await expect(chatPanel.getByText(other, { exact: true })).toBeHidden();
 
-  // Clearing the box gives the whole list back rather than leaving it narrowed
+  // Emptying the box and searching again gives the whole list back
   await chatPanel.getByLabel("ハイライトを検索").fill("");
+  await chatPanel.getByRole("button", { name: "検索" }).click();
   await expect(chatPanel.getByText("ハイライト 2件", { exact: true })).toBeVisible();
+  await expect(chatPanel.getByText(other, { exact: true })).toBeVisible();
+
+  // Enter runs it too, so the box can be used without reaching for the mouse
+  await chatPanel.getByLabel("ハイライトを検索").fill(other.slice(0, 6));
+  await chatPanel.getByLabel("ハイライトを検索").press("Enter");
+  await expect(chatPanel.getByText("ハイライト 2件中 1件", { exact: true })).toBeVisible();
+  await expect(chatPanel.getByText(other, { exact: true })).toBeVisible();
 });
 
 test("a highlight deleted from the list stays gone after a reload", async ({ page }) => {

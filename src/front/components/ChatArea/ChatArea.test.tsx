@@ -234,6 +234,9 @@ describe("ChatArea", () => {
     });
 
     await userEvent.type(screen.getByLabelText("ハイライトを検索"), "集約");
+    // Typing alone asks nothing of the server; the button is what runs it.
+    expect(asked).toStrictEqual([]);
+    await userEvent.click(screen.getByRole("button", { name: "検索" }));
 
     await waitFor(() => expect(screen.getByText("ハイライト 2件中 1件")).toBeInTheDocument());
     expect(screen.getByText(OTHER_TEXT)).toBeInTheDocument();

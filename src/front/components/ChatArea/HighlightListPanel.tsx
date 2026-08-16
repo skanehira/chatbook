@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ResultAsync } from "neverthrow";
 import type { ActiveSelection } from "../../atoms/chatAtom";
 import type { ApiError } from "../../lib/fetcher";
+import { isSubmitKey } from "../../lib/isSubmitKey";
 import { ConfirmDialog } from "../ConfirmDialog";
 
 export interface HighlightListItem {
@@ -20,6 +21,10 @@ interface HighlightListPanelProps {
   /** The search box, held by whoever runs the search. */
   query: string;
   onQueryChange: (query: string) => void;
+  /** Runs the search for what is in the box. Typing alone does not. */
+  onSearch: () => void;
+  /** Whether a search has been run, as opposed to merely typed into the box. */
+  searched: boolean;
   /** Why the search itself did not happen, if it did not. */
   searchError?: string;
   onSelect: (selection: ActiveSelection) => void;
@@ -45,6 +50,8 @@ export function HighlightListPanel({
   total,
   query,
   onQueryChange,
+  onSearch,
+  searched,
   searchError,
   onSelect,
   onDelete,
@@ -78,13 +85,12 @@ export function HighlightListPanel({
     );
   }
 
-  const searching = query.trim() !== "";
   const failure = actionError ?? (searchError ? `検索に失敗しました: ${searchError}` : null);
 
   return (
     <div className="flex flex-col h-full bg-white">
       <h2 className="px-4 py-3 border-b border-gray-200 text-sm font-medium text-gray-600 shrink-0">
-        {searching ? `ハイライト ${total}件中 ${highlights.length}件` : `ハイライト ${total}件`}
+        {searched ? `ハイライト ${total}件中 ${highlights.length}件` : `ハイライト ${total}件`}
       </h2>
       {/* One row, so the list still has room to read in a sheet drawn half way up. */}
       <div className="flex shrink-0 items-center gap-2 border-b border-gray-200 px-4 py-2">
@@ -94,8 +100,24 @@ export function HighlightListPanel({
           placeholder="ハイライトと会話を検索"
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
+          // Enter runs it too, but not the Enter that confirms a Japanese
+          // word: that one belongs to the IME, and searching there would run
+          // on half a phrase.
+          onKeyDown={(e) => {
+            if (isSubmitKey(e.nativeEvent as unknown as KeyboardEvent)) {
+              e.preventDefault();
+              onSearch();
+            }
+          }}
           className={`min-w-0 flex-1 ${SEARCH_INPUT_CLASS}`}
         />
+        <button
+          type="button"
+          onClick={onSearch}
+          className="shrink-0 cursor-pointer rounded border border-gray-300 px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
+        >
+          検索
+        </button>
       </div>
       {failure !== null && (
         <p role="alert" className="m-2 rounded-md bg-red-50 p-3 text-sm text-red-600">

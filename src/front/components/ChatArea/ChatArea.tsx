@@ -54,7 +54,7 @@ export function ChatArea({
 }: ChatAreaProps) {
   const [activeSelection, setActiveSelection] = useAtom(activeSelectionAtom);
   const { highlights, removeHighlight } = useHighlights(book?.id, undefined, deleteHighlight);
-  const { query, setQuery, matchedIds, searchError } = useHighlightSearch(
+  const { query, setQuery, submit, matchedIds, searchError } = useHighlightSearch(
     book?.id,
     searchHighlights,
   );
@@ -116,6 +116,8 @@ export function ChatArea({
         total={highlights.length}
         query={query}
         onQueryChange={setQuery}
+        onSearch={submit}
+        searched={matchedIds !== null}
         searchError={searchError}
         onSelect={onSelectionClick}
         // Leaving the chat is the store's to decide once the server answers:
