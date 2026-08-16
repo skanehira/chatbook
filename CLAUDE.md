@@ -770,10 +770,10 @@ move より前にスクロールへ吸われる。**44 は `HANDLE_WIDTH` 1 箇�
 
 一覧（`src/front/components/ChatArea/HighlightListPanel.tsx`）は**データ源を読まない
 props のコンポーネントのまま**で、自分で持っているのは削除ダイアログの開閉と直近の削除失敗
-（`actionError`）だけ。**検索欄はパネルが描くが、値も結果も持たない**——入力・debounce・
-SWR は `src/front/hooks/useHighlightSearch.ts` にあり、`ChatArea` がそれを呼んで
-`query` / `onQueryChange` / `searchError` と、絞り込み済みの `highlights` / 本の総数
-`total` を props で渡す。
+（`actionError`）だけ。**検索欄はパネルが描くが、値も結果も持たない**——入力と SWR は
+`src/front/hooks/useHighlightSearch.ts` にあり、`ChatArea` がそれを呼んで
+`query` / `onQueryChange` / `onSearch` / `searched` / `searchError` と、絞り込み済みの
+`highlights` / 本の総数 `total` を props で渡す。
 
 **検索の受け口は `GET /api/pdf/:pdfId/search?q=`**（`src/server/routes/pdf.ts` →
 `pdfService.ts` の `searchSelections`）。**サーバで検索するのは、チャットが本の
@@ -804,15 +804,22 @@ SWR は `src/front/hooks/useHighlightSearch.ts` にあり、`ChatArea` がそれ
   うちは足りるので FTS5 は入れていない
 - **入力は 1 行に収める**（何かを足すときも）。狭い画面では同じ一覧が `ChatSheet` の中に
   出て、half（画面の 46%）だと縦が無い
-- **打つたびに投げない**（`useHighlightSearch` が 250ms の debounce）。タイマーは
-  `onChange` の中で張る——`useEffect` を増やさずに済み、タイマーはそれを始めた打鍵のもの
-  だから。テストは `debounceMs` を DI して偽タイマーで進める
-- **検索していないときのヘッダは `ハイライト N件` のまま**。検索中だけ
+- **打つことは検索することではない**。サーバへ行くのは検索ボタンか Enter を押したとき
+  だけで（`submit` が `query` を `term` へ移す）、打っている間は一覧が動かない。日本語を
+  打つ読者にとっては、変換中の文字列で検索が走らないことが要（debounce ではこれが守れず、
+  変換の途中経過が毎回サーバへ行く）
+- **Enter の判定は `isSubmitKey`**（`ChatInput` と共用）。変換を確定する Enter は IME の
+  ものなので検索を走らせない——ここを素の `key === "Enter"` に戻すと、日本語の語を確定
+  するたびに検索が走る
+- **検索していないときのヘッダは `ハイライト N件` のまま**。検索を実行した後だけ
   `ハイライト N件中 M件` に変える。どちらも E2E と jsdom が完全一致で照合している。
-  切り替わるのは**打鍵の時点**（`query`）で、結果が届いた時点（`term`）ではない
-- **答えが来るまで前の結果を見せたまま**にする（SWR の `keepPreviousData`）。全件に戻して
-  から絞り直すと、1 文字ごとに一覧が跳ねる
-- **一致が 0 件でも入力欄は残す**（消すと検索を解除する手段がなくなる）。本に
+  切り替えを決めるのは**検索が走ったか**（`searched` = `matchedIds !== null`）で、
+  箱の中身（`query`）ではない——打っただけでヘッダが動くと、まだ絞られていない一覧に
+  絞られたという顔をさせることになる
+- **次の答えが来るまで前の結果を見せたまま**にする（SWR の `keepPreviousData`）。検索を
+  押し直すたびに一覧がいったん全件へ戻ると、読者は絞り込みが解けたのかと思う
+- **一致が 0 件でも入力欄と検索ボタンは残す**（消すと検索を解除する手段がなくなる。
+  **解除は箱を空にして検索を押すこと**で、空にしただけでは前の結果のまま）。本に
   ハイライトが 1 つも無いときだけは、入力欄ごと出さずに始め方の案内を出す
 - **検索が失敗しても一覧は隠さない**——検索できなかったことと、一致が無かったことは別。
   ただし**見えるものは前項が決める**: まだ一度も結果が来ていなければ全件、来ていれば
@@ -859,7 +866,7 @@ SWR は `src/front/hooks/useHighlightSearch.ts` にあり、`ChatArea` がそれ
 | 何を                                      | どのテスト                                                                                                        |
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | 検索の SQL（本文・チャット・`%`・他の本） | `test/worker/pdf.test.ts` の `GET /api/pdf/:pdfId/search`（8 件。**チャット本文で見つかることを守る唯一の場所**） |
-| 入力・debounce・失敗の運び方              | `src/front/hooks/useHighlightSearch.test.tsx`                                                                     |
+| 入力と実行の分離・失敗の運び方            | `src/front/hooks/useHighlightSearch.test.tsx`                                                                     |
 | 一覧の見え方・削除の確認と失敗表示        | `HighlightListPanel.test.tsx`                                                                                     |
 | 検索結果で一覧が絞られる                  | `ChatArea.test.tsx`「narrows the list to what the server says holds the query, chats included」                   |
 | サーバが落とした分だけキャッシュから除く  | `useHighlights.test.tsx`「takes a highlight the reader deleted out of the list without re-reading the book」      |
@@ -967,8 +974,7 @@ SWR の使い方で押さえるところ:
   `atomFamily` を使わないのは非推奨で本を開くたびに警告を出すため
 - **テストの差し替え口は 2 つある**。取得そのものを差し替えるなら DI 引数——
   `useBook(pdfId, loadBook)` / `useHighlights(pdfId, loadBook, deleteHighlight)` /
-  `useHighlightSearch(pdfId, search, debounceMs)`（**時間も DI**。既定は
-  `requestSelectionSearch`）/
+  `useHighlightSearch(pdfId, search)`（既定は `requestSelectionSearch`）/
   `usePdfDocument(pdfId, book, fetchFn)` / `useChatStream(fetchFn, now)` /
   `useAskAboutSelection(addHighlight, saveSelection)` /
   `useReadingStateSync(pdfId, locationReady, save, debounceMs)`（**時間も DI**。テストは
