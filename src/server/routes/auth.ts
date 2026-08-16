@@ -15,6 +15,9 @@ type Env = {
     AUTH_USERNAME: string;
     AUTH_PASSWORD: string;
     AUTH_SESSION_SECRET: string;
+    // Production sets the shared `<account>.workers.dev`; local development
+    // leaves it empty so the session cookie remains host-limited.
+    SESSION_COOKIE_DOMAIN?: string;
   };
 };
 
@@ -76,11 +79,11 @@ export const authRoute = new Hono<Env>()
     }
 
     const token = await issueSession(c.env.AUTH_SESSION_SECRET, Date.now());
-    c.header("Set-Cookie", sessionCookie(token));
+    c.header("Set-Cookie", sessionCookie(token, c.env.SESSION_COOKIE_DOMAIN || undefined));
     return c.json({ signedIn: true } as const);
   })
   .post("/auth/logout", (c) => {
-    c.header("Set-Cookie", clearedSessionCookie());
+    c.header("Set-Cookie", clearedSessionCookie(c.env.SESSION_COOKIE_DOMAIN || undefined));
     return c.json({ signedIn: false } as const);
   })
   /**
@@ -89,7 +92,7 @@ export const authRoute = new Hono<Env>()
    */
   .get("/auth/session", (c) => c.json({ signedIn: true } as const));
 
-/** The two paths that answer before anyone has signed in. */
+/** The three paths that answer before anyone has signed in. */
 const PUBLIC_PATHS = new Set(["/api/health", "/api/auth/login", "/api/auth/logout"]);
 
 /**

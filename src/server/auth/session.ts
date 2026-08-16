@@ -9,7 +9,7 @@
  * down in CLAUDE.md as the lost-phone lever.
  */
 
-export const SESSION_COOKIE = "chatbook_session";
+export const SESSION_COOKIE = "account_session";
 
 /** Long enough that a phone picked up on the weekend is still signed in. */
 export const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -90,15 +90,21 @@ export async function verifySession(token: string, secret: string, now: number):
  * password that travels in the clear. Reading on a phone goes through the
  * deployed HTTPS URL; `localhost` counts as secure, so local development and
  * the end-to-end tests are unaffected.
+ *
+ * Production can pass the shared `<account>.workers.dev` domain so sibling
+ * Workers receive the same cookie. Local development leaves it empty, keeping
+ * the cookie host-limited as before.
  */
-export function sessionCookie(token: string): string {
+export function sessionCookie(token: string, domain?: string): string {
   const maxAgeSeconds = Math.floor(SESSION_MAX_AGE_MS / 1000);
-  return `${SESSION_COOKIE}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAgeSeconds}`;
+  const domainAttribute = domain ? `; Domain=${domain}` : "";
+  return `${SESSION_COOKIE}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/${domainAttribute}; Max-Age=${maxAgeSeconds}`;
 }
 
 /** The same cookie, told to go now, so logging out does not wait for the expiry. */
-export function clearedSessionCookie(): string {
-  return `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
+export function clearedSessionCookie(domain?: string): string {
+  const domainAttribute = domain ? `; Domain=${domain}` : "";
+  return `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/${domainAttribute}; Max-Age=0`;
 }
 
 /**

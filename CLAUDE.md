@@ -123,9 +123,18 @@ atom に常駐させているわけではない。
 | 画面側のゲートとパスワード入力              | `src/front/components/RequireSession.tsx`              |
 | 在籍を確かめるフック                        | `src/front/hooks/useSession.ts`                        |
 
-**セッションは HMAC で署名した Cookie 1 本**（`chatbook_session`、30 日）。中身は失効時刻
+**セッションは HMAC で署名した Cookie 1 本**（`account_session`、30 日）。中身は失効時刻
 だけで、誰であるかを持たない。**署名を先に検証してから失効を読む**ので、失効時刻を書き換えた
 トークンは長いセッションではなく偽物として落ちる。D1 にテーブルは無い。
+
+room-simulator とログインを共有するときは、両 Worker で `AUTH_USERNAME` / `AUTH_PASSWORD` /
+`AUTH_SESSION_SECRET` を同じ値にし、`SESSION_COOKIE_DOMAIN` に同じ `<account>.workers.dev` を
+設定する。ログインもログアウトも共有 Domain の Cookie を更新するので、一方の操作が両方へ効く。
+ローカルは `SESSION_COOKIE_DOMAIN` を空にし、`Domain` 属性の無いホスト限定 Cookie のまま使う。
+Cookieはポートを区別しないので、同じ `localhost` の別ポート同士ではhost-onlyでも共有される。
+本番でDomain共有へ切り替えるときは、新コードをデプロイする前にBindingを設定する。先にhost-onlyの
+`account_session` を発行してしまった場合は、設定変更前にログアウトする。両スコープの同名Cookieが
+共存すると現在のDomain設定に対応する片方しか削除できないため、共存後はブラウザから古い方を消す。
 
 **Cookie には `Secure` を付ける**。公開する以上、平文で運ばれるセッションは平文で運ばれる
 パスワードと同じであるため。代償として**LAN の `http://192.168.x.x:5173` ではログインできない**
@@ -166,8 +175,10 @@ vp build   # dist/chatbook/wrangler.json を作り直す。これを飛ばすと
 vp exec wrangler d1 migrations apply chatbook-db --remote
 ```
 
-秘密は 4 つ、`wrangler secret put <名前>` で入れる（`.dev.vars` はローカル専用でデプロイには
-乗らない）: `LLM_API_KEY` / `AUTH_USERNAME` / `AUTH_PASSWORD` / `AUTH_SESSION_SECRET`。
+必須の秘密は 4 つ、`wrangler secret put <名前>` で入れる（`.dev.vars` はローカル専用で
+デプロイには乗らない）: `LLM_API_KEY` / `AUTH_USERNAME` / `AUTH_PASSWORD` /
+`AUTH_SESSION_SECRET`。room-simulator とログインを共有するときだけ、同じ方法で
+`SESSION_COOKIE_DOMAIN` も入れる。
 接続先とモデル（`LLM_BASE_URL` / `LLM_MODEL` / `LLM_WEB_SEARCH_SUPPORTED`）は秘密ではないので、
 **DeepSeek 以外に向けるときだけ** `wrangler.jsonc` の `vars` に書く（省略すれば DeepSeek。
 下記「LLM の呼び分け」）。**キーを `vars` に書かないこと**——あのファイルは git に入る。

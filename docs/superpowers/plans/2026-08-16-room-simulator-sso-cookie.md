@@ -24,10 +24,12 @@
 ### Task 1: Cookie契約を共有名と任意Domainへ変更する
 
 **Files:**
+
 - Modify: `src/server/auth/session.test.ts`
 - Modify: `src/server/auth/session.ts`
 
 **Interfaces:**
+
 - Consumes: `SESSION_MAX_AGE_MS` と既存の署名・検証処理。
 - Produces: `SESSION_COOKIE = "account_session"`、`sessionCookie(token: string, domain?: string): string`、`clearedSessionCookie(domain?: string): string`。
 
@@ -85,11 +87,13 @@ Expected: 1ファイルの全テストがPASSする。
 ### Task 2: Worker Bindingsとログイン・ログアウトへDomainを配線する
 
 **Files:**
+
 - Modify: `test/worker/auth.test.ts`
 - Modify: `src/server/routes/auth.ts`
 - Modify: `src/server/index.ts`
 
 **Interfaces:**
+
 - Consumes: Task 1の `sessionCookie(token, domain?)` と `clearedSessionCookie(domain?)`。
 - Produces: `Bindings.SESSION_COOKIE_DOMAIN?: string` と、ログイン・ログアウト応答への任意Domain反映。
 
@@ -156,6 +160,7 @@ Expected: `test/worker/auth.test.ts` の全テストがPASSし、未設定時は
 ### Task 3: ローカル設定、生成型、READMEを更新して全体検証する
 
 **Files:**
+
 - Modify: `.dev.vars.example`
 - Modify locally but do not commit: `.dev.vars`
 - Regenerate: `worker-configuration.d.ts`
@@ -163,12 +168,14 @@ Expected: `test/worker/auth.test.ts` の全テストがPASSし、未設定時は
 - Reference: `docs/superpowers/specs/2026-08-16-room-simulator-sso-cookie-design.md`
 
 **Interfaces:**
+
 - Consumes: `SESSION_COOKIE_DOMAIN?: string` のWorker契約。
 - Produces: ローカルで空値となる設定例、Wrangler生成型、本番SSO設定手順。
 
 - [ ] **Step 1: ローカル設定例へ空値を追加する**
 
-`.dev.vars.example` とgitignore済みの `.dev.vars` の `AUTH_SESSION_SECRET` より後へ次を追加する。
+秘密値をパッチ文脈へ出さず両ファイルのキー順を揃えるため、`.dev.vars.example` とgitignore済みの
+`.dev.vars` の共通ヘッダー直後へ次を追加する。既存キー同士の相対順は変えない。
 
 ```dotenv
 # 本番でroom-simulatorとCookieを共有するときだけ <account>.workers.dev を設定する。
@@ -190,7 +197,7 @@ Expected: `worker-configuration.d.ts` の `__BaseEnv_Env` と `ProcessEnv` 対�
 pnpm exec wrangler secret put SESSION_COOKIE_DOMAIN  # room-simulatorと共有する <account>.workers.dev
 ```
 
-説明には、両Workerで4値を一致させること、ローカル空値はホスト限定であること、一方のログアウトが両アプリへ効くこと、旧Cookieからの切替時に一度再ログインが必要なことを明記する。
+説明には、両Workerで4値を一致させること、ローカル空値はホスト限定だが同じホストの別ポートでは共有されること、一方のログアウトが両アプリへ効くこと、旧Cookieからの切替時に一度再ログインが必要なことを明記する。既存Workerでは新コードのデプロイ前にDomainを設定し、host-only版を発行済みなら設定前にログアウトする。両スコープが共存した場合はブラウザから古いCookieを削除する手順も書く。
 
 - [ ] **Step 4: 全テストと静的検査を実行する**
 

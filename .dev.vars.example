@@ -1,6 +1,10 @@
 # Worker が読む秘密。ローカル用のコピー元。
 # 本番の値はここではなく `wrangler secret put <名前>` で入れる。
 
+# 本番で room-simulator と Cookie を共有するときだけ
+# <account>.workers.dev を設定する。ローカルは空のままにする。
+SESSION_COOKIE_DOMAIN=
+
 # 回答を書くモデルの API キー。空でも起動はするが、チャットが 500 で返る。
 # キーの「存在」だけで worker-configuration.d.ts の差分が消えるので、
 # 回答の生成を手で確かめないうちはダミー値でよい。

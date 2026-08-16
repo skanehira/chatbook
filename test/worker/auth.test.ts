@@ -19,6 +19,19 @@ function login(body: unknown): Promise<Response> {
   });
 }
 
+/** Explicit bindings for checking configured and empty cookie-domain wiring. */
+function bindingsWithSessionCookieDomain(domain: string) {
+  return {
+    DB: env.DB,
+    PDF_BUCKET: env.PDF_BUCKET,
+    LLM_API_KEY: "test-key",
+    AUTH_USERNAME: "test-user",
+    AUTH_PASSWORD: "test-password",
+    AUTH_SESSION_SECRET: env.AUTH_SESSION_SECRET,
+    SESSION_COOKIE_DOMAIN: domain,
+  };
+}
+
 /** The cookie the browser would have been handed, as a request header. */
 function cookieFrom(response: Response): string {
   const header = response.headers.get("Set-Cookie");
@@ -43,7 +56,7 @@ describe("POST /api/auth/login", () => {
     // as `Secure` is. The token itself carries the time it was signed at, so it
     // is left out — that it works is "lets the reader through" below.
     const [assignment, ...attributes] = response.headers.get("Set-Cookie")!.split("; ");
-    expect(assignment.slice(0, assignment.indexOf("="))).toBe("chatbook_session");
+    expect(assignment.slice(0, assignment.indexOf("="))).toBe("account_session");
     expect(attributes).toStrictEqual([
       "HttpOnly",
       "Secure",
@@ -51,6 +64,34 @@ describe("POST /api/auth/login", () => {
       "Path=/",
       "Max-Age=2592000",
     ]);
+  });
+
+  it("sets the configured shared Domain on the login cookie", async () => {
+    const response = await app.request(
+      "https://chatbook.example.workers.dev/api/auth/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: "test-user", password: "test-password" }),
+      },
+      bindingsWithSessionCookieDomain("example.workers.dev"),
+    );
+
+    expect(response.headers.get("Set-Cookie")).toContain("; Domain=example.workers.dev;");
+  });
+
+  it("keeps the login cookie host-limited when the binding is empty", async () => {
+    const response = await app.request(
+      LOGIN,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: "test-user", password: "test-password" }),
+      },
+      bindingsWithSessionCookieDomain(""),
+    );
+
+    expect(response.headers.get("Set-Cookie")).not.toContain("; Domain=");
   });
 
   it("refuses a wrong password without saying the username was right", async () => {
@@ -204,7 +245,19 @@ describe("POST /api/auth/logout", () => {
     // wire. `SESSION_COOKIE` is imported for building requests, where following
     // a rename is what a test should do.
     expect(response.headers.get("Set-Cookie")).toBe(
-      "chatbook_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
+      "account_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
+    );
+  });
+
+  it("expires the configured shared-domain cookie", async () => {
+    const response = await app.request(
+      "https://chatbook.example.workers.dev/api/auth/logout",
+      { method: "POST" },
+      bindingsWithSessionCookieDomain("example.workers.dev"),
+    );
+
+    expect(response.headers.get("Set-Cookie")).toBe(
+      "account_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=example.workers.dev; Max-Age=0",
     );
   });
 });

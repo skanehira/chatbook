@@ -186,12 +186,40 @@ pnpm exec wrangler secret put LLM_API_KEY   # DeepSeek 以外に向けるなら�
 pnpm exec wrangler secret put AUTH_USERNAME
 pnpm exec wrangler secret put AUTH_PASSWORD
 pnpm exec wrangler secret put AUTH_SESSION_SECRET
+# room-simulator とログインを共有するときだけ（例: <account>.workers.dev）
+pnpm exec wrangler secret put SESSION_COOKIE_DOMAIN
 ```
 
 `AUTH_USERNAME` / `AUTH_PASSWORD` がログインに使う ID とパスワード、
 `AUTH_SESSION_SECRET` はセッション Cookie の署名鍵です（ランダムな長い値にしてください）。
 **この 3 つのどれかが空だと API はすべて閉じたまま**になります。設定を忘れたまま公開して
 しまう事故を防ぐためで、初回のデプロイは意図的に閉じた状態で出ます。
+
+### room-simulator とログインを共有する
+
+同じ Cloudflare アカウントの room-simulator とログインを共有する場合は、両 Worker の
+`AUTH_USERNAME` / `AUTH_PASSWORD` / `AUTH_SESSION_SECRET` を同じ値にし、さらに
+`SESSION_COOKIE_DOMAIN` も同じ `<account>.workers.dev` に設定してください。両アプリは
+`account_session` Cookie を共有するため、片方でログインすればもう片方でもログイン済みに
+なり、片方でログアウトすると両方からログアウトします。
+
+ローカルの `.dev.vars.example` では `SESSION_COOKIE_DOMAIN` を空にしてあります。この場合は
+`Domain` 属性を付けないホスト限定 Cookie になります。ただし Cookie はポートを区別しないため、
+両アプリを同じ `localhost` の別ポートで開くと `account_session` は共有されます。ローカルで
+セッションを分離したいときは、アプリごとに別のブラウザプロファイルを使ってください。
+
+以前のバージョンが発行した `chatbook_session` は引き継ぎません。Cookie共有対応版へ更新した
+直後だけ、`account_session` を発行するために一度ログインし直してください。
+
+既存の chatbook Worker で共有を有効にするときは、**この対応版をデプロイする前に**
+`wrangler secret put SESSION_COOKIE_DOMAIN` を実行してください。旧コードはこの追加Bindingを
+参照しないため、先に設定しても挙動は変わりません。新コードの初回ログインから共有Domainを
+使うことで、同名のhost-only Cookieとの共存を防げます。
+
+対応版をDomain未設定のまま既に使った場合は、`SESSION_COOKIE_DOMAIN` を設定する前にchatbookから
+ログアウトしてください。設定後にhost-only版とDomain版の `account_session` が共存した場合は、
+ブラウザのサイトデータから古いhost-only Cookieを削除してからログインし直してください。Cookieは
+作成時と同じDomain属性でしか削除できないため、現在の設定だけでは別スコープのCookieを消せません。
 
 順番の理由:
 
@@ -332,6 +360,8 @@ E2E も動きません。
 `LLM_BASE_URL` / `LLM_MODEL` / `LLM_WEB_SEARCH_SUPPORTED` は**値を空にした行**で並べてあります。
 別のプロバイダをローカルで試すときはここに値を入れて `vp dev` で確かめられます
 （上記「接続先とモデルを差し替える」）。
+`SESSION_COOKIE_DOMAIN` も空のままならホスト限定 Cookie になります。同じ `localhost` の
+別ポートは同じホストなので、ポートだけを変えてもCookieは分離されません。
 
 **行を消したり並べ替えたりしないでください。** `worker-configuration.d.ts` は `.dev.vars` に
 あるキーの一覧**と並び順**から生成されるので、どちらを変えてもコミット済みの型に差分が出ます。

@@ -13,7 +13,7 @@ room-simulator の既存実装と同じ Cookie 契約へ chatbook を揃える�
 - Cookie 名を `chatbook_session` から `account_session` へ変更する。
 - `AUTH_USERNAME`、`AUTH_PASSWORD`、`AUTH_SESSION_SECRET` は両 Worker で同じ値を使う。
 - 本番では両 Worker の `SESSION_COOKIE_DOMAIN` に同じ `<account>.workers.dev` を設定する。
-- ローカル開発では `SESSION_COOKIE_DOMAIN` を空にし、`Domain` 属性を付けないホスト限定 Cookie を使う。
+- ローカル開発では `SESSION_COOKIE_DOMAIN` を空にし、`Domain` 属性を付けないホスト限定 Cookie を使う。同じ `localhost` の別ポートはCookieを共有するため、分離が必要なら別のブラウザプロファイルを使う。
 - 旧 `chatbook_session` は読み取らない。互換経路を増やさず、一度だけ再ログインする明確な切り替えにする。
 
 `SESSION_COOKIE_DOMAIN` を `wrangler.jsonc` の平文 `vars` に固定する方式は採用しない。Cloudflare アカウントごとに値が異なるため、README では `wrangler secret put SESSION_COOKIE_DOMAIN` で設定する手順を案内する。
@@ -71,9 +71,10 @@ Worker テストの専用型定義には、必要に応じて `SESSION_COOKIE_DO
 
 - room-simulator と SSO するには、両 Worker で `AUTH_USERNAME` / `AUTH_PASSWORD` / `AUTH_SESSION_SECRET` と `SESSION_COOKIE_DOMAIN` を一致させる。
 - `SESSION_COOKIE_DOMAIN` の例は `<account>.workers.dev` である。
-- ローカルの空値ではホスト限定 Cookie になり、ローカル開発同士では Cookie を共有しない。
+- ローカルの空値ではホスト限定 Cookie になる。同じ `localhost` の別ポートでは共有されるため、分離には別のブラウザプロファイルを使う。
 - 一方のアプリからログアウトすると共有 Cookie が消えるため、両アプリからログアウトする。
 - Cookie 名変更後、既存の `chatbook_session` は使われないため一度再ログインが必要である。
+- 既存Workerでは新コードのデプロイ前に共有Domainを設定し、host-only版とDomain版の `account_session` を共存させない。共存した場合はブラウザから古いhost-only Cookieを削除する。
 
 ## スコープ外
 

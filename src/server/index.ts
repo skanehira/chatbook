@@ -17,6 +17,9 @@ type Env = {
     AUTH_USERNAME: string;
     AUTH_PASSWORD: string;
     AUTH_SESSION_SECRET: string;
+    // Optional so localhost keeps a host-limited cookie while production can
+    // share the session across sibling Workers on the account subdomain.
+    SESSION_COOKIE_DOMAIN?: string;
   };
 };
 

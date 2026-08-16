@@ -81,7 +81,25 @@ describe("sessionCookie", () => {
     // a part of what goes on the wire as the attributes are, and a test that
     // asks the implementation for it would follow a rename without a word.
     expect(sessionCookie("abc.def")).toBe(
-      "chatbook_session=abc.def; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000",
+      "account_session=abc.def; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000",
+    );
+  });
+
+  it("leaves Domain off when the caller passes none, so local cookies stay host-limited", () => {
+    expect(sessionCookie("abc.def", undefined)).toBe(
+      "account_session=abc.def; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000",
+    );
+  });
+
+  it("leaves Domain off for an empty local binding", () => {
+    expect(sessionCookie("abc.def", "")).toBe(
+      "account_session=abc.def; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000",
+    );
+  });
+
+  it("adds Domain when the caller passes one, so sibling Workers can share the cookie", () => {
+    expect(sessionCookie("abc.def", "example.workers.dev")).toBe(
+      "account_session=abc.def; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=example.workers.dev; Max-Age=2592000",
     );
   });
 });
@@ -89,7 +107,19 @@ describe("sessionCookie", () => {
 describe("clearedSessionCookie", () => {
   it("expires the cookie rather than leaving the browser to forget it", () => {
     expect(clearedSessionCookie()).toBe(
-      "chatbook_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
+      "account_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
+    );
+  });
+
+  it("leaves Domain off the cleared cookie for an empty local binding", () => {
+    expect(clearedSessionCookie("")).toBe(
+      "account_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
+    );
+  });
+
+  it("expires the shared-domain cookie, so logout applies to sibling Workers too", () => {
+    expect(clearedSessionCookie("example.workers.dev")).toBe(
+      "account_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=example.workers.dev; Max-Age=0",
     );
   });
 });
