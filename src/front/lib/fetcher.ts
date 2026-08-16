@@ -148,34 +148,27 @@ export function resultFetcher<S extends z.ZodType>(
 }
 
 /**
- * `resultFetcher` for the one request whose progress the reader has to see.
- *
- * `fetch` cannot report how much of a body has gone up, and a book is the one
- * thing this app sends that is large enough for that to matter: 22MB over a
- * phone's connection is a minute of a notice that never changes. So this one
- * goes through `XMLHttpRequest`, which can.
- *
- * Everything else is kept the same on purpose — the schema decides the return
- * type, and a refusal is worded by `readRefusal` — so a caller cannot tell this
- * apart from the rest except by the progress it reports.
- *
- * `createRequest` is injectable for the same reason `fetchFn` is elsewhere.
+ * The `XMLHttpRequest` plumbing `postWithProgress` and `putWithProgress`
+ * share: open, send, and turn whatever came back into the same `ApiError`
+ * shape every other request in this app produces. Only the method and the
+ * event the browser reports progress on differ between the two.
  */
-export function postWithProgress<S extends z.ZodType>(
+function xhrWithProgress<S extends z.ZodType>(
+  method: "POST" | "PUT",
   url: string,
   schema: S,
-  body: FormData,
-  onProgress: (ratio: number) => void,
-  createRequest: () => XMLHttpRequest = () => new XMLHttpRequest(),
+  body: XMLHttpRequestBodyInit,
+  onProgress: (loaded: number, total: number | null) => void,
+  createRequest: () => XMLHttpRequest,
 ): ResultAsync<z.output<S>, ApiError> {
   const sent = new Promise<z.output<S>>((resolve, reject) => {
     const request = createRequest();
-    request.open("POST", url);
+    request.open(method, url);
 
     request.upload.addEventListener("progress", (event) => {
-      // Absent when the browser cannot say how big the body is; there is no
-      // share to report then, so the caller keeps whatever it last heard.
-      if (event.lengthComputable && event.total > 0) onProgress(event.loaded / event.total);
+      // `total` absent when the browser cannot say how big the body is; the
+      // caller decides what to do with a share it cannot compute.
+      onProgress(event.loaded, event.lengthComputable ? event.total : null);
     });
 
     request.addEventListener("load", () => {
@@ -227,4 +220,56 @@ export function postWithProgress<S extends z.ZodType>(
   return ResultAsync.fromPromise(sent, (cause) =>
     cause instanceof ApiError ? cause : networkFailure(url, cause),
   );
+}
+
+/**
+ * `resultFetcher` for the one request whose progress the reader has to see.
+ *
+ * `fetch` cannot report how much of a body has gone up, and a book is the one
+ * thing this app sends that is large enough for that to matter: 22MB over a
+ * phone's connection is a minute of a notice that never changes. So this one
+ * goes through `XMLHttpRequest`, which can.
+ *
+ * Everything else is kept the same on purpose — the schema decides the return
+ * type, and a refusal is worded by `readRefusal` — so a caller cannot tell this
+ * apart from the rest except by the progress it reports.
+ *
+ * `createRequest` is injectable for the same reason `fetchFn` is elsewhere.
+ */
+export function postWithProgress<S extends z.ZodType>(
+  url: string,
+  schema: S,
+  body: FormData,
+  onProgress: (ratio: number) => void,
+  createRequest: () => XMLHttpRequest = () => new XMLHttpRequest(),
+): ResultAsync<z.output<S>, ApiError> {
+  return xhrWithProgress(
+    "POST",
+    url,
+    schema,
+    body,
+    (loaded, total) => {
+      if (total !== null && total > 0) onProgress(loaded / total);
+    },
+    createRequest,
+  );
+}
+
+/**
+ * `xhrWithProgress` for one part of a larger upload: a chunk of a book too
+ * big to send as a single request, PUT with the bytes it holds and how many
+ * of them have gone up so far.
+ *
+ * `onProgress` gets raw bytes rather than a ratio — unlike `postWithProgress`,
+ * this is one of several requests a caller is uploading together, and only
+ * the caller knows the total across all of them.
+ */
+export function putWithProgress<S extends z.ZodType>(
+  url: string,
+  schema: S,
+  body: Blob,
+  onProgress: (loaded: number) => void,
+  createRequest: () => XMLHttpRequest = () => new XMLHttpRequest(),
+): ResultAsync<z.output<S>, ApiError> {
+  return xhrWithProgress("PUT", url, schema, body, (loaded) => onProgress(loaded), createRequest);
 }

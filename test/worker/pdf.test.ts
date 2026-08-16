@@ -318,6 +318,182 @@ describe("POST /api/pdf/open", () => {
   });
 });
 
+/** The hex content hash the client computes and R2 objects are keyed by. */
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Runs the whole R2-direct upload a large book takes: init, one PUT of the
+ * binary's only part, one PUT of the text, then complete. Mirrors
+ * `uploadBook` above but through the multipart routes rather than a single
+ * `multipart/form-data` POST — the path that lets a book past the request
+ * body ceiling a single POST runs into.
+ */
+async function uploadBookViaR2(options: {
+  tag: string;
+  fileName: string;
+  pages?: string[];
+}): Promise<{ response: Response; fileHash: string }> {
+  const bytes = uniquePdfBytes(options.tag);
+  const fileHash = await sha256Hex(bytes);
+  const fullText = options.pages ? options.pages.join("\f") : "text";
+
+  const init = await apiFetch("https://example.com/api/pdf/uploads/init", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fileHash }),
+  });
+  const { pdfUploadId } = (await init.json()) as { pdfUploadId: string };
+
+  const partResponse = await apiFetch(
+    `https://example.com/api/pdf/uploads/${fileHash}/${pdfUploadId}/parts/1`,
+    { method: "PUT", body: bytes },
+  );
+  const part = (await partResponse.json()) as { partNumber: number; etag: string };
+
+  await apiFetch(`https://example.com/api/pdf/uploads/${fileHash}/text`, {
+    method: "PUT",
+    body: fullText,
+  });
+
+  const response = await apiFetch("https://example.com/api/pdf/uploads/complete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fileName: options.fileName,
+      fileHash,
+      pageCount: options.pages?.length ?? 1,
+      pdfUploadId,
+      pdfParts: [part],
+    }),
+  });
+  return { response, fileHash };
+}
+
+describe("POST /api/pdf/uploads/*", () => {
+  it("hands back a multipart upload id to upload the binary's parts against", async () => {
+    const fileHash = await sha256Hex(uniquePdfBytes("upload-init"));
+
+    const response = await apiFetch("https://example.com/api/pdf/uploads/init", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileHash }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toStrictEqual({ pdfUploadId: expect.any(String) });
+  });
+
+  it("rejects an init request whose fileHash is not a sha256 hex digest", async () => {
+    const response = await apiFetch("https://example.com/api/pdf/uploads/init", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileHash: "not-a-hash" }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("stores a part and answers with the part number and etag R2 assigned it", async () => {
+    const bytes = uniquePdfBytes("upload-part");
+    const fileHash = await sha256Hex(bytes);
+    const init = await apiFetch("https://example.com/api/pdf/uploads/init", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileHash }),
+    });
+    const { pdfUploadId } = (await init.json()) as { pdfUploadId: string };
+
+    const response = await apiFetch(
+      `https://example.com/api/pdf/uploads/${fileHash}/${pdfUploadId}/parts/1`,
+      { method: "PUT", body: bytes },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toStrictEqual({
+      partNumber: 1,
+      etag: expect.any(String),
+    });
+  });
+
+  it("refuses a part PUT whose partNumber is not a positive integer", async () => {
+    const fileHash = await sha256Hex(uniquePdfBytes("upload-part-bad-number"));
+
+    const response = await apiFetch(
+      `https://example.com/api/pdf/uploads/${fileHash}/some-upload-id/parts/0`,
+      { method: "PUT", body: new Uint8Array([1, 2, 3]) },
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it("stores the extracted text as one object rather than through R2's multipart dance", async () => {
+    const fileHash = await sha256Hex(uniquePdfBytes("upload-text"));
+
+    const response = await apiFetch(`https://example.com/api/pdf/uploads/${fileHash}/text`, {
+      method: "PUT",
+      body: "the book's full text",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toStrictEqual({ stored: true });
+  });
+
+  it("refuses an empty text PUT", async () => {
+    const fileHash = await sha256Hex(uniquePdfBytes("upload-text-empty"));
+
+    const response = await apiFetch(`https://example.com/api/pdf/uploads/${fileHash}/text`, {
+      method: "PUT",
+      body: "",
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("assembles the uploaded parts into a book pdf.js can read back, with its text in R2", async () => {
+    const bytes = uniquePdfBytes("upload-complete");
+    const { response } = await uploadBookViaR2({
+      tag: "upload-complete",
+      fileName: "large-book.pdf",
+      pages: ["page one", "page two"],
+    });
+
+    expect(response.status).toBe(200);
+    const metadata = (await response.json()) as PdfResponse;
+    expect(metadata).toStrictEqual({
+      id: expect.any(String),
+      fileName: "large-book.pdf",
+      pageCount: 2,
+      readingState: null,
+    });
+
+    // The binary made it to R2 whole, byte for byte.
+    const fileResponse = await apiFetch(`https://example.com/api/pdf/${metadata.id}/file`);
+    expect(new Uint8Array(await fileResponse.arrayBuffer())).toStrictEqual(bytes);
+
+    // The text landed in R2 rather than D1, and `/locate` reads it from there.
+    const locateResponse = await apiFetch(
+      `https://example.com/api/pdf/${metadata.id}/locate?text=${encodeURIComponent("page two")}`,
+    );
+    expect(await locateResponse.json()).toStrictEqual({ found: true, pageNumber: 2 });
+  });
+
+  it("re-opens the same file uploaded via R2 and returns the existing pdfId", async () => {
+    const first = await uploadBookViaR2({ tag: "upload-reopen", fileName: "first.pdf" });
+    const firstMetadata = (await first.response.json()) as PdfResponse;
+
+    const second = await uploadBookViaR2({ tag: "upload-reopen", fileName: "second.pdf" });
+    const secondMetadata = (await second.response.json()) as PdfResponse;
+
+    expect(secondMetadata.id).toBe(firstMetadata.id);
+    expect(secondMetadata.fileName).toBe("second.pdf");
+  });
+});
+
 describe("GET /api/pdf/:pdfId", () => {
   it("returns PDF metadata for a valid pdfId", async () => {
     // Its own bytes, as above: the empty highlights and absent place asserted
@@ -416,6 +592,23 @@ describe("GET /api/pdf/:pdfId/file", () => {
     expect(response.status).toBe(200);
     expect(new Uint8Array(await response.arrayBuffer())).toStrictEqual(
       uniquePdfBytes("file-stale"),
+    );
+  });
+
+  it("serves byte ranges so pdf.js can open large PDFs without one full download", async () => {
+    const book = await uploadBook({ tag: "file-range", fileName: "range.pdf" });
+
+    const response = await apiFetch(`https://example.com/api/pdf/${book.id}/file`, {
+      headers: { Range: "bytes=0-3" },
+    });
+
+    expect(response.status).toBe(206);
+    expect(response.headers.get("Accept-Ranges")).toBe("bytes");
+    expect(response.headers.get("Content-Range")).toBe(
+      `bytes 0-3/${uniquePdfBytes("file-range").byteLength}`,
+    );
+    expect(new Uint8Array(await response.arrayBuffer())).toStrictEqual(
+      uniquePdfBytes("file-range").slice(0, 4),
     );
   });
 

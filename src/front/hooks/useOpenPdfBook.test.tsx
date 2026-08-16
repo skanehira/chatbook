@@ -13,6 +13,7 @@ import type { BookDetail } from "../../shared/schemas/book";
 const PDF_ID = "01JBOOK";
 const FILE_NAME = "Cloudflare Workers.pdf";
 const PAGE_COUNT = 209;
+const FILE_HASH = "sha256-of-the-file";
 
 const COVER = new Blob(["webp bytes"], { type: "image/webp" });
 
@@ -29,12 +30,68 @@ const SAVED_PLACE = {
 function extraction(thumbnail: Blob | null): ExtractedPdfData {
   return {
     fileName: FILE_NAME,
-    fileHash: "sha256-of-the-file",
+    fileHash: FILE_HASH,
     fullText: FULL_TEXT,
     pageCount: PAGE_COUNT,
     fileContentBase64: "",
     thumbnail,
   };
+}
+
+/** The URL a `Request` or plain string a call to `fetch` was made with. */
+function urlOf(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  return input instanceof Request ? input.url : input.toString();
+}
+
+/**
+ * Stands in for every request in the upload except the chunked binary PUTs —
+ * those alone need to report progress, so they go through the fake
+ * `XMLHttpRequest` instead. Records what it was asked so a test can check the
+ * requests went out in the right shape.
+ */
+function stubUploadFetch({
+  refuseComplete = false,
+  readingState = SAVED_PLACE,
+}: {
+  refuseComplete?: boolean;
+  readingState?: BookDetail["readingState"];
+} = {}) {
+  const calls: { method: string; url: string }[] = [];
+
+  const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = urlOf(input);
+    const method = init?.method ?? "GET";
+    calls.push({ method, url });
+
+    if (method === "POST" && url.endsWith("/api/pdf/uploads/init")) {
+      return new Response(JSON.stringify({ pdfUploadId: "upload-1" }), { status: 200 });
+    }
+    if (method === "PUT" && url.endsWith(`/api/pdf/uploads/${FILE_HASH}/text`)) {
+      return new Response(JSON.stringify({ stored: true }), { status: 200 });
+    }
+    if (method === "POST" && url.endsWith("/api/pdf/uploads/complete")) {
+      if (refuseComplete) {
+        return new Response(
+          JSON.stringify({
+            error: { code: "PDF_EXTRACT_FAILED", message: "Failed to process PDF" },
+          }),
+          { status: 500 },
+        );
+      }
+      return new Response(
+        JSON.stringify({ id: PDF_ID, fileName: FILE_NAME, pageCount: PAGE_COUNT, readingState }),
+        { status: 200 },
+      );
+    }
+    if (method === "PUT" && url.endsWith(`/api/pdf/${PDF_ID}/thumbnail`)) {
+      return new Response(JSON.stringify({ stored: true }), { status: 200 });
+    }
+
+    throw new Error(`stubUploadFetch: unexpected request ${method} ${url}`);
+  }) as typeof fetch;
+
+  return { fetchFn, calls };
 }
 
 async function openAPdf(
@@ -49,9 +106,12 @@ async function openAPdf(
     onProgress?: (ratio: number) => void;
   } = {},
 ) {
-  // The upload goes through XMLHttpRequest — the only way to hear how much of
-  // the book has gone up — so it is the request, not `fetch`, that stands in.
+  // Only the chunked binary PUT reports progress, so it alone goes through a
+  // fake `XMLHttpRequest`; everything else in the upload is driven by the
+  // stub `fetchFn` below. The chosen file is one chunk, so exactly one such
+  // request is made.
   const sending = fakeUpload();
+  const { fetchFn, calls } = stubUploadFetch({ refuseComplete: refuse, readingState });
 
   // The cache is built here rather than inside the provider so the test can
   // read what the upload filed in it.
@@ -66,6 +126,7 @@ async function openAPdf(
         async () => extraction(thumbnail),
         onProgress,
         () => sending.request,
+        fetchFn,
       ),
     { wrapper },
   );
@@ -73,27 +134,15 @@ async function openAPdf(
   const chosen = new File(["%PDF-1.7"], FILE_NAME, { type: "application/pdf" });
   const pending = result.current(chosen);
 
-  // The extraction has to settle before the request is opened at all.
+  // The binary part cannot be sent before `/uploads/init` has answered with
+  // an upload id.
   await waitFor(() => expect(sending.openedWith()).not.toBeNull());
-  sending.uploaded(5, 20);
-  sending.uploaded(20, 20);
-  if (refuse) {
-    sending.answers(
-      { error: { code: "PDF_EXTRACT_FAILED", message: "Failed to process PDF" } },
-      500,
-    );
-  } else {
-    sending.answers({
-      id: PDF_ID,
-      fileName: FILE_NAME,
-      pageCount: PAGE_COUNT,
-      fullText: FULL_TEXT,
-      readingState,
-    });
-  }
+  sending.uploaded(2, chosen.size);
+  sending.uploaded(chosen.size, chosen.size);
+  sending.answers({ partNumber: 1, etag: '"part-1"' });
 
   const outcome = await pending;
-  return { cache, uploads: [sending.openedWith()], outcome, chosen };
+  return { cache, calls, partUpload: sending.openedWith(), outcome, chosen };
 }
 
 describe("useOpenPdfBook", () => {
@@ -154,10 +203,16 @@ describe("useOpenPdfBook", () => {
     expect(cache.get(bookKey(PDF_ID))).toBeUndefined();
   });
 
-  it("sends the chosen file to the endpoint that stores books", async () => {
-    const { uploads } = await openAPdf(COVER);
+  it("sends the chosen file to R2 directly, in the order the multipart upload requires", async () => {
+    const { calls, partUpload } = await openAPdf(COVER);
 
-    expect(uploads).toStrictEqual([["POST", "/api/pdf/open"]]);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toStrictEqual([
+      "POST /api/pdf/uploads/init",
+      `PUT /api/pdf/uploads/${FILE_HASH}/text`,
+      "POST /api/pdf/uploads/complete",
+      `PUT /api/pdf/${PDF_ID}/thumbnail`,
+    ]);
+    expect(partUpload).toStrictEqual(["PUT", `/api/pdf/uploads/${FILE_HASH}/upload-1/parts/1`]);
   });
 
   it("leaves the chosen file for the viewer so the book is not fetched back", async () => {

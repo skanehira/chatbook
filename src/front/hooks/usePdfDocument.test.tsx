@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vite-plus/test";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import type * as pdfjsTypes from "pdfjs-dist";
-import { storeCoverIfMissing, usePdfDocument } from "./usePdfDocument";
+import { storeCoverIfMissing, usePdfDocument, type PdfSource } from "./usePdfDocument";
 import {
   rememberUploadedFile,
   uploadedFileFor,
@@ -87,7 +87,7 @@ const BOOK: BookDetail = {
  */
 function loadWith(
   fetchFn: typeof fetch,
-  buildDocument?: (data: ArrayBuffer) => Promise<pdfjsTypes.PDFDocumentProxy>,
+  buildDocument?: (source: PdfSource) => Promise<pdfjsTypes.PDFDocumentProxy>,
   initialBook: BookDetail | undefined = BOOK,
 ) {
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -103,14 +103,16 @@ function loadWith(
   );
 }
 
-/** A stored PDF whose bytes pdf.js is standing in for. */
+/** The authenticated endpoint pdf.js is standing in for. */
 const servesBytes: typeof fetch = () => Promise.resolve(new Response(new ArrayBuffer(8)));
 
 /** Records the documents pdf.js handed over and which of them were closed. */
 function documentBuilder() {
   const closed: string[] = [];
+  const sources: PdfSource[] = [];
   let built = 0;
-  const build = () => {
+  const build = (source: PdfSource) => {
+    sources.push(source);
     const name = `doc-${++built}`;
     // Closed through the task that loaded it, which is where pdf.js 6 keeps
     // `destroy`: the worker belongs to the task, not to the document.
@@ -123,7 +125,7 @@ function documentBuilder() {
       },
     } as unknown as pdfjsTypes.PDFDocumentProxy);
   };
-  return { closed, build };
+  return { closed, sources, build };
 }
 
 describe("usePdfDocument", () => {
@@ -133,13 +135,14 @@ describe("usePdfDocument", () => {
     forgetUploadedFile("01JOTHER");
   });
 
-  it("hands the viewer the document pdf.js built from the stored bytes", async () => {
-    const { build } = documentBuilder();
+  it("hands the viewer the document pdf.js built from the stored file endpoint", async () => {
+    const { build, sources } = documentBuilder();
 
     const { result } = loadWith(servesBytes, build);
 
     await waitFor(() => expect(result.current.pdfDocument).not.toBeNull());
     expect(result.current.error).toBeNull();
+    expect(sources).toStrictEqual([{ kind: "url", url: `/api/pdf/${PDF_ID}/file` }]);
   });
 
   it("asks for the binary without waiting for the book to arrive", async () => {
@@ -153,46 +156,13 @@ describe("usePdfDocument", () => {
     await waitFor(() => expect(result.current.pdfDocument).not.toBeNull());
   });
 
-  it("reports the server's reason when the book's file cannot be fetched", async () => {
-    // The viewer used to be left with no document and no reason for it, which
-    // reads on screen as a book that opened to a blank page.
-    const missing: typeof fetch = () =>
-      Promise.resolve(
-        new Response(
-          JSON.stringify({
-            error: { code: "PDF_FILE_MISSING", message: "PDF binary not found in storage" },
-          }),
-          { status: 404, headers: { "Content-Type": "application/json" } },
-        ),
-      );
+  it("reports pdf.js' reason when the book's file cannot be opened", async () => {
+    const refusedByPdfJs = () => Promise.reject(new Error("PDF binary not found in storage"));
 
-    const { result } = loadWith(missing);
+    const { result } = loadWith(servesBytes, refusedByPdfJs);
 
     await waitFor(() => expect(result.current.error).toBe("PDF binary not found in storage"));
     expect(result.current.pdfDocument).toBeNull();
-  });
-
-  it("falls back to the status when a refusal is not this API's error envelope", async () => {
-    // An edge returning its own 502 page: there is no `error.message` to quote,
-    // and the reader still has to be told the book will not open.
-    const edgeFailure: typeof fetch = () =>
-      Promise.resolve(new Response("<html>502</html>", { status: 502 }));
-
-    const { result } = loadWith(edgeFailure);
-
-    await waitFor(() =>
-      expect(result.current.error).toBe(
-        `request to /api/pdf/${PDF_ID}/file failed with status 502`,
-      ),
-    );
-  });
-
-  it("reports a request for the book's file that never reached the server", async () => {
-    const offline: typeof fetch = () => Promise.reject(new TypeError("Failed to fetch"));
-
-    const { result } = loadWith(offline);
-
-    await waitFor(() => expect(result.current.error).toBe("Failed to fetch"));
   });
 
   it("builds the document from the file the reader just uploaded, without fetching it back", async () => {
@@ -203,19 +173,16 @@ describe("usePdfDocument", () => {
       asked.push(input instanceof Request ? input.url : input.toString());
       return Promise.reject(new TypeError("the viewer should not have asked"));
     };
-    const handedTo: ArrayBuffer[] = [];
-    const { build } = documentBuilder();
+    const { build, sources } = documentBuilder();
     rememberUploadedFile(PDF_ID, new File(["%PDF-1.7 bytes"], "book.pdf"));
 
-    const { result } = loadWith(refuseToServe, (data) => {
-      handedTo.push(data);
-      return build();
-    });
+    const { result } = loadWith(refuseToServe, build);
 
     await waitFor(() => expect(result.current.pdfDocument).not.toBeNull());
     expect(asked).toStrictEqual([]);
-    expect(handedTo).toHaveLength(1);
-    expect(handedTo[0].byteLength).toBe(14);
+    expect(sources).toHaveLength(1);
+    expect(sources[0].kind).toBe("data");
+    expect((sources[0] as { kind: "data"; data: ArrayBuffer }).data.byteLength).toBe(14);
   });
 
   it("fetches the book that was opened from the shelf rather than the held file", async () => {

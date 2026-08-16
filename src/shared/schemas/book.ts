@@ -53,7 +53,7 @@ export const pdfMetadataSchema = z.object({
   id: z.string(),
   fileName: z.string(),
   pageCount: z.number().int().positive(),
-  fullText: z.string(),
+  fullText: z.string().optional(),
   // Carried here too: the picker seeds the cache from this answer, and a seed
   // without the place would open an already-read book at page 1.
   readingState: readingStateSchema.nullable(),

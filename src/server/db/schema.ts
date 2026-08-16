@@ -6,6 +6,7 @@ export const pdfs = sqliteTable("pdfs", {
   fileName: text("file_name").notNull(),
   fileHash: text("file_hash").notNull().unique(),
   fullText: text("full_text").notNull(),
+  fullTextPath: text("full_text_path"),
   pageCount: integer("page_count").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

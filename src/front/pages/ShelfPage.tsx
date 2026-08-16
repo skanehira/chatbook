@@ -26,8 +26,10 @@ interface ShelfPageProps {
   deleteBook?: DeleteBook;
   /** Passed straight to the file picker; injectable so tests can fail a read. */
   extract?: (file: File) => Promise<ExtractedPdfData>;
-  /** The upload's own request; injectable so tests can drive its progress. */
+  /** The upload's chunked binary requests; injectable so tests can drive their progress. */
   createUploadRequest?: () => XMLHttpRequest;
+  /** The upload's other requests (init, text, complete); injectable like `fetchFn` elsewhere. */
+  uploadFetch?: typeof fetch;
 }
 
 /**
@@ -168,6 +170,7 @@ export function ShelfPage({
   deleteBook = requestBookDeletion,
   extract,
   createUploadRequest,
+  uploadFetch,
 }: ShelfPageProps = {}) {
   const navigate = useNavigate();
   const { data: books, error: loadError, mutate } = useSWR(SHELF_KEY, loadBooks);
@@ -178,6 +181,7 @@ export function ShelfPage({
     // what is left is the server, which cannot report anything.
     (ratio) => setImporting(ratio >= 1 ? { phase: "storing" } : { phase: "uploading", ratio }),
     createUploadRequest,
+    uploadFetch,
   );
   // What the reader's last action did wrong: adding a book, or removing one.
   // Both are worded by whoever detected them and shown in the same place.

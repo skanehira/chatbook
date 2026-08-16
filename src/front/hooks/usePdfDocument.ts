@@ -5,7 +5,7 @@ import type * as pdfjsTypes from "pdfjs-dist";
 import { pdfjsLib, PDFJS_ASSET_OPTIONS } from "../lib/pdfjsConfig";
 import { renderCoverThumbnail } from "../lib/pdfLoader";
 import { forgetUploadedFile, uploadedFileFor } from "../lib/uploadedFileHandoff";
-import { fetcher, readRefusal } from "../lib/fetcher";
+import { fetcher } from "../lib/fetcher";
 import { thumbnailStoredSchema, type BookDetail } from "../../shared/schemas/book";
 
 /** Where a book's cover is written, and the key the write is tracked under. */
@@ -51,9 +51,22 @@ export async function storeCoverIfMissing(
   }
 }
 
-/** Hands the fetched bytes to pdf.js. Injected so tests can stand in for it. */
-const buildPdfDocument = (data: ArrayBuffer) =>
-  pdfjsLib.getDocument({ data, ...PDFJS_ASSET_OPTIONS }).promise;
+/**
+ * Where pdf.js reads the document's bytes from: a book just uploaded is still
+ * in hand as a `File`, so pdf.js is given it directly; anything else is asked
+ * of the API by URL, which lets pdf.js range-fetch it instead of this hook
+ * having to buffer the whole book in memory first — the difference that
+ * matters once a book runs into the hundreds of megabytes.
+ */
+export type PdfSource = { kind: "url"; url: string } | { kind: "data"; data: ArrayBuffer };
+
+/** Builds the pdf.js document from wherever its bytes are. Injected for tests. */
+const buildPdfDocument = (source: PdfSource) =>
+  pdfjsLib.getDocument(
+    source.kind === "url"
+      ? { url: source.url, withCredentials: true, ...PDFJS_ASSET_OPTIONS }
+      : { data: source.data, ...PDFJS_ASSET_OPTIONS },
+  ).promise;
 
 /**
  * Load the pdfjs-dist PDFDocumentProxy for the given book by fetching the
@@ -74,7 +87,7 @@ export function usePdfDocument(
   pdfId: string | undefined,
   book: BookDetail | undefined,
   fetchFn: typeof fetch = fetch,
-  buildDocument: (data: ArrayBuffer) => Promise<pdfjsTypes.PDFDocumentProxy> = buildPdfDocument,
+  buildDocument: (source: PdfSource) => Promise<pdfjsTypes.PDFDocumentProxy> = buildPdfDocument,
 ) {
   const [pdfDocument, setPdfDocument] = useState<pdfjsTypes.PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -121,21 +134,18 @@ export function usePdfDocument(
     async function loadPdf() {
       try {
         // The book the reader just uploaded is still in hand, so the bytes do
-        // not have to come back down. Read again rather than kept as a buffer:
-        // pdf.js detaches what it is given, and this runs twice in development.
+        // not have to come back down — over a phone's connection that would
+        // cost the upload all over again. Read again rather than kept as a
+        // buffer: pdf.js detaches what it is given, and this runs twice in
+        // development. Anything else is asked of the API by URL: pdf.js then
+        // range-fetches it as it parses, rather than this hook buffering a
+        // book that can run into the hundreds of megabytes.
         const justUploaded = uploadedFileFor(bookId);
-        const arrayBuffer = await (async () => {
-          if (justUploaded) return justUploaded.arrayBuffer();
-          const response = await fetchFn(url);
-          if (!response.ok) {
-            const refusal = await readRefusal(url, response);
-            throw new Error(refusal.message);
-          }
-          return response.arrayBuffer();
-        })();
-        if (cancelled) return;
-
-        const doc = await buildDocument(arrayBuffer);
+        const doc = await buildDocument(
+          justUploaded
+            ? { kind: "data", data: await justUploaded.arrayBuffer() }
+            : { kind: "url", url },
+        );
         opened = doc;
         if (cancelled) {
           void doc.loadingTask.destroy();

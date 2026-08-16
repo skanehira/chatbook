@@ -5,9 +5,13 @@ import { ResultAsync } from "neverthrow";
 import { pdfs, selections, chatMessages } from "../db/schema";
 import {
   openPdf,
+  openStoredPdf,
   getPdf,
   listPdfs,
   deletePdf,
+  fullTextObjectKey,
+  pdfObjectKey,
+  readPdfFullText,
   saveReadingState,
   searchSelections,
   thumbnailObjectKey,
@@ -36,6 +40,11 @@ import {
 } from "../../shared/schemas/selection";
 import { sendChatRequestSchema } from "../../shared/schemas/chat";
 import type { ErrorCode, ErrorPayload } from "../../shared/schemas/error";
+import {
+  fileHashSchema,
+  uploadInitRequestSchema,
+  uploadCompleteRequestSchema,
+} from "../../shared/schemas/upload";
 import { storageFailure, type ServiceError } from "../services/serviceError";
 import { validate } from "./validation";
 
@@ -60,6 +69,25 @@ const PDF_NOT_FOUND = {
   code: "PDF_NOT_FOUND" satisfies ErrorCode,
   message: "PDF not found",
 } as const;
+
+/**
+ * A book's worth of extracted text, even at a thousand pages, is a few MB —
+ * nowhere near what the PDF binary can reach. So only the binary needs R2's
+ * multipart upload; the text goes up as one PUT, and this is generous
+ * headroom for it rather than a limit anyone should expect to approach.
+ */
+const MAX_FULL_TEXT_BYTES = 20 * 1024 * 1024;
+
+function responseRange(object: R2Object): { contentRange: string; contentLength: number } | null {
+  const range = object.range;
+  if (!range || !("offset" in range) || typeof range.offset !== "number") return null;
+
+  const length = range.length ?? object.size - range.offset;
+  return {
+    contentRange: `bytes ${range.offset}-${range.offset + length - 1}/${object.size}`,
+    contentLength: length,
+  };
+}
 
 /**
  * The reply a store that refused to answer turns into.
@@ -177,6 +205,93 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           (metadata) => c.json(metadata),
           (failure) => {
             console.error("PDF open error:", failure.cause);
+            return c.json(
+              {
+                error: {
+                  code: "PDF_EXTRACT_FAILED" satisfies ErrorCode,
+                  message: "Failed to process PDF",
+                },
+              },
+              500,
+            );
+          },
+        );
+      })
+      .post("/pdf/uploads/init", validate("json", uploadInitRequestSchema), async (c) => {
+        const { fileHash } = c.req.valid("json");
+        const pdfUpload = await c.env.PDF_BUCKET.createMultipartUpload(pdfObjectKey(fileHash), {
+          httpMetadata: { contentType: "application/pdf" },
+        });
+
+        return c.json({ pdfUploadId: pdfUpload.uploadId });
+      })
+      .put("/pdf/uploads/:fileHash/:uploadId/parts/:partNumber", async (c) => {
+        const fileHash = fileHashSchema.safeParse(c.req.param("fileHash"));
+        const partNumber = Number(c.req.param("partNumber"));
+        if (!fileHash.success || !Number.isInteger(partNumber) || partNumber <= 0) {
+          return c.json(
+            {
+              error: { code: "VALIDATION_ERROR" satisfies ErrorCode, message: "Invalid upload" },
+            },
+            400,
+          );
+        }
+
+        const upload = c.env.PDF_BUCKET.resumeMultipartUpload(
+          pdfObjectKey(fileHash.data),
+          c.req.param("uploadId"),
+        );
+        const part = await upload.uploadPart(partNumber, await c.req.arrayBuffer());
+        return c.json({ partNumber: part.partNumber, etag: part.etag });
+      })
+      // The text is small enough to go up as one PUT rather than through R2's
+      // multipart dance; this has to land before `/uploads/complete`, which
+      // just points the new row at the key this wrote.
+      .put("/pdf/uploads/:fileHash/text", async (c) => {
+        const fileHash = fileHashSchema.safeParse(c.req.param("fileHash"));
+        if (!fileHash.success) {
+          return c.json(
+            {
+              error: { code: "VALIDATION_ERROR" satisfies ErrorCode, message: "Invalid upload" },
+            },
+            400,
+          );
+        }
+
+        const body = await c.req.arrayBuffer();
+        if (body.byteLength === 0 || body.byteLength > MAX_FULL_TEXT_BYTES) {
+          return c.json(
+            {
+              error: {
+                code: "VALIDATION_ERROR" satisfies ErrorCode,
+                message: `Text must be non-empty and at most ${MAX_FULL_TEXT_BYTES} bytes`,
+              },
+            },
+            400,
+          );
+        }
+
+        await c.env.PDF_BUCKET.put(fullTextObjectKey(fileHash.data), body, {
+          httpMetadata: { contentType: "text/plain; charset=utf-8" },
+        });
+
+        return c.json({ stored: true });
+      })
+      .post("/pdf/uploads/complete", validate("json", uploadCompleteRequestSchema), async (c) => {
+        const { fileName, fileHash, pageCount, pdfUploadId, pdfParts } = c.req.valid("json");
+
+        const pdfUpload = c.env.PDF_BUCKET.resumeMultipartUpload(
+          pdfObjectKey(fileHash),
+          pdfUploadId,
+        );
+        await pdfUpload.complete(pdfParts);
+
+        const stored = await openStoredPdf(c.env.DB, { fileName, fileHash, pageCount }, idClock);
+
+        return stored.match(
+          (metadata) => c.json(metadata),
+          (failure) => {
+            console.error("PDF multipart open error:", failure.cause);
             return c.json(
               {
                 error: {
@@ -313,7 +428,10 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
         // `onlyIf` hands the browser's `If-None-Match` to R2, which answers
         // without the body when the file is the one already held. Reading the
         // header here instead would still pull the object out of storage.
-        const object = await c.env.PDF_BUCKET.get(pdf.filePath, { onlyIf: c.req.raw.headers });
+        const object = await c.env.PDF_BUCKET.get(pdf.filePath, {
+          onlyIf: c.req.raw.headers,
+          range: c.req.raw.headers,
+        });
         if (!object) {
           return c.json(
             {
@@ -334,13 +452,25 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           "Content-Type": "application/pdf",
           "Content-Disposition": `inline; filename="${encodeURIComponent(pdf.fileName)}"`,
           "Cache-Control": "private, max-age=31536000, immutable",
+          "Accept-Ranges": "bytes",
           ETag: object.httpEtag,
         };
 
         // R2 leaves the body off when the condition said the file is unchanged
         if (!("body" in object)) return new Response(null, { status: 304, headers });
 
-        return new Response(object.body, { headers });
+        // R2 fills in `object.range` (offset 0, full length) even when the
+        // request carried no `Range` header, so its mere presence cannot be
+        // used to decide 206 vs 200 — the request header is the only signal.
+        const range = c.req.raw.headers.has("Range") ? responseRange(object) : null;
+        return new Response(object.body, {
+          status: range ? 206 : 200,
+          headers: {
+            ...headers,
+            "Content-Length": String(range?.contentLength ?? object.size),
+            ...(range ? { "Content-Range": range.contentRange } : {}),
+          },
+        });
       })
       // Narrows the highlight list by what was marked and what was said about
       // it. The chats are not in the book the list was drawn from, so this is
@@ -363,7 +493,11 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
       .get("/pdf/:pdfId/locate", validate("query", locateQuerySchema), async (c) => {
         const { text } = c.req.valid("query");
         const pdf = await drizzle(c.env.DB)
-          .select({ fullText: pdfs.fullText, pageCount: pdfs.pageCount })
+          .select({
+            fullText: pdfs.fullText,
+            fullTextPath: pdfs.fullTextPath,
+            pageCount: pdfs.pageCount,
+          })
           .from(pdfs)
           .where(eq(pdfs.id, c.req.param("pdfId")))
           .get();
@@ -374,7 +508,9 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           );
         }
 
-        return c.json(findPageNumber(text, pdf.fullText, pdf.pageCount));
+        return c.json(
+          findPageNumber(text, await readPdfFullText(c.env.PDF_BUCKET, pdf), pdf.pageCount),
+        );
       })
       // Where the reader is, kept on the server so the book opens there on
       // whichever device is picked up next. Read back as part of the book itself.
@@ -530,7 +666,11 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
 
           // Get PDF text for context
           const pdfRow = await d1Db
-            .select({ fullText: pdfs.fullText, pageCount: pdfs.pageCount })
+            .select({
+              fullText: pdfs.fullText,
+              fullTextPath: pdfs.fullTextPath,
+              pageCount: pdfs.pageCount,
+            })
             .from(pdfs)
             .where(eq(pdfs.id, sel.pdfId))
             .get();
@@ -543,7 +683,7 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           }
 
           // Build system prompt
-          const fullText = pdfRow.fullText;
+          const fullText = await readPdfFullText(c.env.PDF_BUCKET, pdfRow);
           const systemPrompt = buildSystemPrompt(fullText, sel.selectedText, useWebSearch);
 
           // Set up SSE streaming

@@ -26,6 +26,7 @@ function renderShelf(props: {
   deleteBook?: DeleteBook;
   extract?: (file: File) => Promise<ExtractedPdfData>;
   createUploadRequest?: () => XMLHttpRequest;
+  uploadFetch?: typeof fetch;
 }) {
   return render(
     <SwrTestCache>
@@ -59,11 +60,12 @@ function recordingDeleter() {
 const TWO_BOOKS = async () => [book(), book({ id: "book-2", fileName: "Rust 入門.pdf" })];
 
 const STORED_ID = "01JBOOK";
+const FILE_HASH = "sha256-of-the-file";
 
 /** Reads a file the way pdf.js does when it can make sense of it. */
 const readsFine = async (file: File): Promise<ExtractedPdfData> => ({
   fileName: file.name,
-  fileHash: "sha256-of-the-file",
+  fileHash: FILE_HASH,
   fullText: "エッジはサーバーレス実行基盤です。",
   pageCount: 209,
   fileContentBase64: "",
@@ -75,9 +77,41 @@ const STORED_BOOK = {
   id: STORED_ID,
   fileName: "Cloudflare Workers.pdf",
   pageCount: 209,
-  fullText: "エッジはサーバーレス実行基盤です。",
   readingState: null,
 };
+
+/** The URL a `Request` or plain string a call to `fetch` was made with. */
+function urlOf(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  return input instanceof Request ? input.url : input.toString();
+}
+
+/**
+ * Stands in for every request the upload makes except the chunked binary
+ * PUTs — those alone report progress and go through the fake
+ * `XMLHttpRequest` a test drives itself (`fakeUpload`).
+ */
+function stubUploadFetch(): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = urlOf(input);
+    const method = init?.method ?? "GET";
+
+    if (method === "POST" && url.endsWith("/api/pdf/uploads/init")) {
+      return new Response(JSON.stringify({ pdfUploadId: "upload-1" }), { status: 200 });
+    }
+    if (method === "PUT" && url.endsWith(`/api/pdf/uploads/${FILE_HASH}/text`)) {
+      return new Response(JSON.stringify({ stored: true }), { status: 200 });
+    }
+    if (method === "POST" && url.endsWith("/api/pdf/uploads/complete")) {
+      return new Response(JSON.stringify(STORED_BOOK), { status: 200 });
+    }
+    if (method === "PUT" && url.endsWith(`/api/pdf/${STORED_ID}/thumbnail`)) {
+      return new Response(JSON.stringify({ stored: true }), { status: 200 });
+    }
+
+    throw new Error(`stubUploadFetch: unexpected request ${method} ${url}`);
+  }) as typeof fetch;
+}
 
 /** Hands the hidden input a file, the way clicking the tile ends up doing. */
 function chooseFile(container: HTMLElement, file: File) {
@@ -246,13 +280,14 @@ describe("ShelfPage", () => {
       loadBooks: TWO_BOOKS,
       extract: readsFine,
       createUploadRequest: () => sending.request,
+      uploadFetch: stubUploadFetch(),
     });
 
     await screen.findByRole("button", { name: "PDFを追加" });
     await chooseFile(container, A_PDF());
     await waitFor(() => expect(sending.openedWith()).not.toBeNull());
     act(() => {
-      sending.answers(STORED_BOOK);
+      sending.answers({ partNumber: 1, etag: '"part-1"' });
     });
 
     expect(await screen.findByText(`リーダー: ${STORED_ID}`)).toBeInTheDocument();
@@ -293,6 +328,7 @@ describe("ShelfPage", () => {
       loadBooks: TWO_BOOKS,
       extract: readsFine,
       createUploadRequest: () => sending.request,
+      uploadFetch: stubUploadFetch(),
     });
     await screen.findByRole("button", { name: "PDFを追加" });
 
@@ -300,7 +336,7 @@ describe("ShelfPage", () => {
     fireEvent.drop(shelf(), carrying([A_PDF()]));
     await waitFor(() => expect(sending.openedWith()).not.toBeNull());
     act(() => {
-      sending.answers(STORED_BOOK);
+      sending.answers({ partNumber: 1, etag: '"part-1"' });
     });
 
     expect(await screen.findByText(`リーダー: ${STORED_ID}`)).toBeInTheDocument();
@@ -371,26 +407,29 @@ describe("ShelfPage", () => {
       loadBooks: TWO_BOOKS,
       extract: readsFine,
       createUploadRequest: () => sending.request,
+      uploadFetch: stubUploadFetch(),
     });
 
     await screen.findByRole("button", { name: "PDFを追加" });
     await chooseFile(container, A_PDF());
     await waitFor(() => expect(sending.openedWith()).not.toBeNull());
 
+    // A_PDF() is 8 bytes and, chunked, one request — the share is of the
+    // whole file, not of whatever this one request's own body happens to be.
     act(() => {
-      sending.uploaded(1, 4);
+      sending.uploaded(2, 8);
     });
     expect(await screen.findByText("アップロード中 25%")).toBe(screen.getByRole("status"));
 
     act(() => {
-      sending.uploaded(3, 4);
+      sending.uploaded(6, 8);
     });
     expect(await screen.findByText("アップロード中 75%")).toBeInTheDocument();
 
     // All of it is up and the server is writing it away: left at 100% the
     // notice would sit unchanged again for as long as that takes.
     act(() => {
-      sending.uploaded(4, 4);
+      sending.uploaded(8, 8);
     });
     expect(await screen.findByText("保存中...")).toBeInTheDocument();
   });

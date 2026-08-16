@@ -26,6 +26,13 @@ export function thumbnailObjectKey(fileHash: string): string {
   return `thumbnails/${fileHash}.webp`;
 }
 
+/**
+ * R2 object key for the text extracted from a PDF.
+ */
+export function fullTextObjectKey(fileHash: string): string {
+  return `texts/${fileHash}.txt`;
+}
+
 export const THUMBNAIL_CONTENT_TYPE = "image/webp";
 
 /**
@@ -51,6 +58,12 @@ interface OpenPdfInput {
   pageCount: number;
   arrayBuffer: ArrayBuffer;
   thumbnail?: ArrayBuffer;
+}
+
+interface OpenStoredPdfInput {
+  fileName: string;
+  fileHash: string;
+  pageCount: number;
 }
 
 export type { BookSummary } from "../../shared/schemas/book";
@@ -102,6 +115,17 @@ export function openPdf(
   return ResultAsync.fromPromise(storePdf(db, bucket, input, idClock), storageFailure);
 }
 
+/**
+ * Register a PDF whose binary and extracted text were already written to R2.
+ */
+export function openStoredPdf(
+  db: D1Database,
+  input: OpenStoredPdfInput,
+  idClock: IdClock = systemIdClock,
+): ResultAsync<PdfMetadata, StorageError> {
+  return ResultAsync.fromPromise(storeStoredPdf(db, input, idClock), storageFailure);
+}
+
 async function storePdf(
   db: D1Database,
   bucket: R2Bucket,
@@ -134,7 +158,7 @@ async function storePdf(
     // re-opening a book never costs the reader their place in it.
     await d1Db
       .update(pdfs)
-      .set({ fileName, fullText, pageCount, updatedAt: idClock.now() })
+      .set({ fileName, fullText, fullTextPath: null, pageCount, updatedAt: idClock.now() })
       .where(eq(pdfs.id, existing.id));
 
     return {
@@ -159,12 +183,74 @@ async function storePdf(
     fileName,
     fileHash,
     fullText,
+    fullTextPath: null,
     pageCount,
     createdAt: now,
     updatedAt: now,
   });
 
   return { id, fileName, pageCount, fullText, readingState: null };
+}
+
+async function storeStoredPdf(
+  db: D1Database,
+  input: OpenStoredPdfInput,
+  idClock: IdClock,
+): Promise<PdfMetadata> {
+  const { fileName, fileHash, pageCount } = input;
+  const d1Db = drizzle(db);
+  const objectKey = pdfObjectKey(fileHash);
+  const fullTextPath = fullTextObjectKey(fileHash);
+
+  const existing = await d1Db.select().from(pdfs).where(eq(pdfs.fileHash, fileHash)).get();
+  if (existing) {
+    await d1Db
+      .update(pdfs)
+      .set({
+        fileName,
+        filePath: objectKey,
+        fullText: "",
+        fullTextPath,
+        pageCount,
+        updatedAt: idClock.now(),
+      })
+      .where(eq(pdfs.id, existing.id));
+
+    return {
+      id: existing.id,
+      fileName,
+      pageCount,
+      readingState: readingStateOf(existing),
+    };
+  }
+
+  const id = idClock.newId();
+  const now = idClock.now();
+
+  await d1Db.insert(pdfs).values({
+    id,
+    filePath: objectKey,
+    fileName,
+    fileHash,
+    fullText: "",
+    fullTextPath,
+    pageCount,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return { id, fileName, pageCount, readingState: null };
+}
+
+export async function readPdfFullText(
+  bucket: R2Bucket,
+  row: { fullText: string; fullTextPath: string | null },
+): Promise<string> {
+  if (!row.fullTextPath) return row.fullText;
+
+  const object = await bucket.get(row.fullTextPath);
+  if (!object) throw new Error(`PDF text object missing: ${row.fullTextPath}`);
+  return await object.text();
 }
 
 /**
@@ -258,7 +344,11 @@ async function removePdf(db: D1Database, bucket: R2Bucket, pdfId: string): Promi
   if (!pdf) return false;
 
   await d1Db.delete(pdfs).where(eq(pdfs.id, pdfId));
-  await bucket.delete([pdfObjectKey(pdf.fileHash), thumbnailObjectKey(pdf.fileHash)]);
+  await bucket.delete([
+    pdfObjectKey(pdf.fileHash),
+    thumbnailObjectKey(pdf.fileHash),
+    pdf.fullTextPath ?? fullTextObjectKey(pdf.fileHash),
+  ]);
 
   return true;
 }
