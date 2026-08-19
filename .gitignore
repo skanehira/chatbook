@@ -17,3 +17,4 @@ public/pdfjs
 test-results
 playwright-report
 e2e/fixtures/.cache
+.pnpm-store

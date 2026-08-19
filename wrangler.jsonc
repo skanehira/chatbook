@@ -13,7 +13,7 @@
     {
       "binding": "DB",
       "database_name": "chatbook-db",
-      "database_id": "95640ec2-d069-40c4-94a5-63fc625e1c8f",
+      "database_id": "c36f5f56-3ca7-48a2-ad72-e2c5c062b174",
     },
   ],
   "r2_buckets": [
@@ -22,5 +22,9 @@
       "bucket_name": "chatbook-pdfs",
     },
   ],
-  "vars": {},
+  "vars": {
+    "LLM_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "LLM_MODEL": "gemini-3.6-flash",
+    "LLM_WEB_SEARCH_SUPPORTED": "false",
+  },
 }
