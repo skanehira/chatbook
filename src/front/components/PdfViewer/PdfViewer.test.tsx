@@ -276,6 +276,34 @@ describe("PdfViewer", () => {
     expect(wentToTheBrowser).toBe(false);
   });
 
+  // The pane can be on screen a moment before the listener that takes the
+  // pinch is on it: a passive effect is scheduled, while the mutation that
+  // mounted the pane is observable at once. In that window the browser zooms
+  // the whole app, which is what the viewer exists to refuse.
+  it("takes a pinch that arrives as soon as the pane is on screen", async () => {
+    vi.stubGlobal("fetch", bucketWithout({ ok: true }, 200));
+    const store = createStore();
+    renderViewer({ measureSelection: () => MEASURED, store });
+
+    const appeared = new Promise<void>((resolve) => {
+      const observer = new MutationObserver(() => {
+        if (document.querySelector("textarea") === null) return;
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+
+    document.dispatchEvent(new Event("selectionchange"));
+    await appeared;
+
+    const input = document.querySelector("textarea");
+    if (input === null) throw new Error("the question box never appeared");
+
+    expect(fireEvent.wheel(input, { ctrlKey: true, deltaY: -100 })).toBe(false);
+    expect(store.get(zoomAtomFor(BOOK.id))).toBe(1.5);
+  });
+
   it("leaves a wheel without the pinch modifier to the pane it scrolls", async () => {
     vi.stubGlobal("fetch", bucketWithout({ ok: true }, 200));
     const store = createStore();

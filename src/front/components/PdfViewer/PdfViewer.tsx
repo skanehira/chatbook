@@ -1,5 +1,5 @@
 // oxlint-disable-next-line no-restricted-imports -- 表示領域の ResizeObserver 購読、ピンチ (ctrlKey wheel) の非 passive な購読、ページ遷移時のスクロール位置リセット、document への selectionchange 購読、pdf.js が描いたテキストレイヤーからの引用箇所の計測に必要
-import { useRef, useState, useCallback, useEffect, useMemo } from "react";
+import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { useAtomValue, useAtom, useSetAtom } from "jotai";
 import {
   currentPageAtom,
@@ -357,7 +357,11 @@ export function PdfViewer({
   // A trackpad pinch arrives as a wheel event with ctrlKey set. React attaches
   // its own wheel listener passively, which cannot refuse the browser's page
   // zoom, so this one is bound to the pane directly.
-  useEffect(() => {
+  // A layout effect, not a passive one: the pane is observable the moment it
+  // is in the DOM, while a passive effect waits its turn on the scheduler. In
+  // that window a pinch is answered by the browser zooming the whole app,
+  // which is exactly what taking this listener non-passively is for.
+  useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container || !book) return;
 
