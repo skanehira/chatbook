@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vite-plus/test";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { unstable_serialize } from "swr";
 import { ChatMessageBubble } from "./ChatMessageBubble";
 import { SwrTestCache } from "../../../test/swrTestCache";
@@ -14,6 +15,9 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
     ...overrides,
   };
 }
+
+/** A fence holding a document, captioned the way the system prompt asks for. */
+const FIGURE = '```html title="シーケンス図"\n<div class="a">A</div>\n```';
 
 describe("ChatMessageBubble", () => {
   it("renders emphasis in an assistant answer as markdown", () => {
@@ -110,6 +114,46 @@ describe("ChatMessageBubble", () => {
 
     const code = container.querySelector("pre code");
     expect(code?.innerHTML).toBe("graph TD\n");
+  });
+
+  // The figure itself is a document the bubble's markdown renderer cannot run,
+  // so the fence becomes the way to open it instead of the code it is written in
+  it("shows an html fence as the link that opens it, not as code", () => {
+    const { container } = render(<ChatMessageBubble message={message({ content: FIGURE })} />);
+
+    expect(screen.getByRole("button", { name: "シーケンス図" })).toBeInTheDocument();
+    expect(container.querySelector("pre")).toBeNull();
+  });
+
+  it("names the link 図解を見る when the fence carries no caption", () => {
+    render(<ChatMessageBubble message={message({ content: "```html\n<div>A</div>\n```" })} />);
+
+    expect(screen.getByRole("button", { name: "図解を見る" })).toBeInTheDocument();
+  });
+
+  // The fence arrives a token at a time, so for most of the answer's life it
+  // holds half a document
+  it("shows an html fence as code while the answer is still streaming", () => {
+    const { container } = render(
+      <ChatMessageBubble streaming message={message({ content: FIGURE })} />,
+    );
+
+    expect(container.querySelector("pre")?.textContent).toBe('<div class="a">A</div>\n');
+    expect(screen.queryByRole("button", { name: "シーケンス図" })).toBeNull();
+  });
+
+  // highlight.js splits an html fence into `hljs-*` spans, so the source has to
+  // be gathered back out of them. This is the only test that says it was: a
+  // fence read straight off its first child never reaches the popup at all.
+  it("hands the popup the answer's own html, not the spans highlighting broke it into", async () => {
+    const user = userEvent.setup();
+    render(<ChatMessageBubble message={message({ content: FIGURE })} />);
+
+    await user.click(screen.getByRole("button", { name: "シーケンス図" }));
+
+    expect(screen.getByTitle("シーケンス図").getAttribute("srcdoc")).toBe(
+      '<!doctype html>\n<div class="a">A</div>\n',
+    );
   });
 
   it("turns a [1] in the answer body into the control that jumps to its page", () => {

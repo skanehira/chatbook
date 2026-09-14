@@ -161,6 +161,7 @@ Instructions:
 ${missingAnswerInstruction}
 - Keep answers concise and well-structured.
 - When a diagram helps, write it as a \`\`\`mermaid fenced code block using flowchart, sequenceDiagram or stateDiagram-v2 syntax valid in Mermaid 11. Invalid mermaid is shown to the reader as raw code, so double-check the syntax.
+- When mermaid cannot draw it — a free-form layout, two structures side by side, a chart it has no syntax for — write the diagram as a \`\`\`html fenced code block instead, captioned so the reader knows what they are opening: \`\`\`html title="キャッシュの流れ". They never see this code, only a link that opens the document in a popup, so write a self-contained document — styles and scripts inline, nothing loaded from outside, nothing kept in browser storage.
 - For tabular comparisons, use a markdown table, not a diagram.${webSearchInstruction}
 
 When answering, follow these citation rules strictly:
