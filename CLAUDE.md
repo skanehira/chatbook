@@ -68,13 +68,13 @@ commit 済みの `worker-configuration.d.ts` は `.dev.vars.example` の並び�
 `// oxlint-disable-next-line no-restricted-imports -- <理由>` を付けて理由を明記する運用にしている。
 新しく足すときも同じように理由を書くこと。
 
-現在 12 ファイルに理由コメントがあり、内訳は次の 5 つしかない。新しく足す `useEffect` も
+現在 13 ファイルに理由コメントがあり、内訳は次の 5 つしかない。新しく足す `useEffect` も
 このどれかに当てはまるはずで、当てはまらないなら書き方を疑うこと:
 
 | 用途                                                    | ファイル                                                                                                                                                                                                                                                   |
 | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | pdf.js という命令的ライブラリの呼び出しと後始末         | `PdfPage.tsx`（`RenderTask` / `TextLayer`）、`usePdfDocument.ts`（バイナリ取得とドキュメント構築）、`usePdfOutline.ts`（`pdfOutline.ts` の `readOutlineEntries` の呼び出しと後始末）、`usePageBaseSize.ts`（`getViewport({scale: 1})` でページの素の寸法） |
-| `document` / `window` / `ResizeObserver` の購読         | `useKeyboardShortcuts.ts`、`SettingsMenu.tsx`、`SelectionPopover.tsx`、`PdfViewer.tsx`、`useSettledSelection.ts`（`document` の `selectionchange` と `window` の pointer 系）                                                                              |
+| `document` / `window` / `ResizeObserver` の購読         | `useKeyboardShortcuts.ts`、`SettingsMenu.tsx`、`SelectionPopover.tsx`、`PdfViewer.tsx`、`useSettledSelection.ts`（`document` の `selectionchange` と `window` の pointer 系）、`HtmlDiagram.tsx`（`document` の `keydown` で Escape を閉じる）             |
 | 非 passive なジェスチャの購読（ブラウザの既定を止める） | `PdfViewer.tsx`（ctrlKey wheel のピンチ、touch と Safari の gesture イベント）                                                                                                                                                                             |
 | DOM への命令的な書き込み（スクロール位置）              | `ChatMessageList.tsx`（最下部へ追随）、`PdfViewer.tsx`（ページ遷移時のリセット）                                                                                                                                                                           |
 | URL とサーバという React の外の状態への同期             | `useReadingLocation.ts`、`useReadingStateSync.ts`（読書位置の保存と離脱時の書き残し）                                                                                                                                                                      |
@@ -545,10 +545,90 @@ be iterated…」**（ネイティブの iterator を消してから本を開く
 実キーが要る（上記「worktree を作ったら最初に `.dev.vars` を用意する」）ので、手で見るなら
 メインクローンの `LLM_API_KEY` を入れ、長い回答の途中で上へスクロールする。
 
+#### 図解は mermaid と HTML の 2 通りで書かせる
+
+**書き分けさせるのは system prompt**（`src/server/services/llmService.ts` の
+`buildSystemPrompt`）。mermaid の行の直後に HTML の行がある。**位置はテストが 2 組で
+押さえている**——`MERMAID_RULE`〜`TABLE_RULE` の間を見る 1 本が HTML の行を、
+`TABLE_RULE`〜`CITATION_RULES` の間を見る既存 4 本が web search の指示を固定している。
+だから**新しい指示は `MERMAID_RULE` の行より前か、`CITATION_RULES` の後ろ（プロンプトの
+末尾）に足す**。2 つの区間の内側に足すと、どちらかの組が落ちる。
+
+フェンスは 2 つだけ特別扱いする。どちらも `ChatMessageBubble.tsx` の `pre` レンダラ
+（`fenceRenderer(streaming)`）が検出して差し替える。
+
+| フェンス       | 差し替え先                        | 読者に見えるもの                                   |
+| -------------- | --------------------------------- | -------------------------------------------------- |
+| ` ```mermaid ` | `MermaidBlock.tsx`（`ChatArea/`） | 描かれた図（描けなければコードのまま）             |
+| ` ```html `    | `HtmlDiagram.tsx`（`ChatArea/`）  | キャプション付きのリンク。押すとポップアップで開く |
+
+`HtmlDiagram` が出すのは画面を覆う `role="dialog"` のモーダルで、ページ上の選択に貼り付く
+`SelectionPopover` のポップオーバーとは別物である。
+
+**フェンス本文は `textOf` が再帰的に集める。** `language-html` は highlight.js の `xml`
+文法に当たるので、`<code>` の子は text ノード 1 つではなく、`hljs-*` の span 2 つと
+その間の text 2 つに割れる（2026-09-14 実測）。素朴に `children[0].value` を読むと
+（`children[0]` は span なので）`null` が返り、**リンクが出ないまま黙ってコードブロックに
+落ちる**（エラーは出ない）。本文そのものを見張っているのは `ChatMessageBubble.test.tsx`
+の「hands the popup the answer's own html…」で、リンクが出ること自体は同じファイルの
+「shows an html fence as the link…」と「names the link 図解を見る…」も見張っている。
+
+**キャプションはフェンスの info string**（` ```html title="…" `）。**書くのはモデル**で、
+書式を指示しているのは system prompt の HTML の行。読むのは `ChatMessageBubble.tsx` の
+`fenceCaption`（mdast-util-to-hast が `<code>` の `data.meta` に残したものを読む）と
+`src/front/lib/htmlDiagram.ts` の `captionFromMeta`。読めなければ「図解を見る」——**文言の
+既定を持つのは描く側**（`HtmlDiagram`）で、`fenceCaption` は null を返すだけ。
+
+**回答の HTML はアプリの DOM に入らない。** 見せるのはリンクだけで、文書は `iframe` の
+`srcdoc` に渡す。`sandbox` は `allow-scripts` のみで、**`allow-same-origin` を足しては
+いけない**——足すとフレームがアプリと同一オリジンになり、Cookie も localStorage も DOM も
+読め、自分の sandbox 属性も外せる。`allow-scripts` を残すのは図が自分で描けるようにする
+ため。**`srcdoc` には doctype を補う**（`asStandaloneDocument`）。無いとブラウザが後方互換
+モードで組み、回答が書いた幅・高さの意味が変わる（回答が自分で書いていればそのまま）。
+**mermaid 側だけは非対称**で、`MermaidBlock.tsx` は `mermaid.render` の SVG を
+`dangerouslySetInnerHTML` でアプリの DOM に置く（`src/` で唯一の使用箇所）。あちらは
+mermaid 自身の sanitizer（既定 `securityLevel: "strict"`）に委ねてよく、回答が書いた生の
+HTML はそこを通せない。
+
+**ストリーミング中はリンクを出さない。** `ChatMessageList` が確定メッセージとは別に描く
+ストリーミング用バブルが `streaming` を渡し、`pre` はそれを読んでコードブロックのまま
+据え置く。書きかけの文書を開かせないためと、開いたポップアップが回答確定で unmount する
+（＝閉じる）のを避けるため。**この配線だけは `ChatMessageList.test.tsx` の 1 本が見張って
+いる**（外しても他は green のまま）。
+
+**Escape は `document` の keydown で受ける**（`SettingsMenu` / `SelectionPopover` と同じ形）。
+`ConfirmDialog` のラッパー `onKeyDown` を採らないのは、**ヘッダをクリックするとフォーカスが
+`body` に落ち、React の根の外側なので合成イベントが届かない**ため。同じ購読で
+`stopPropagation` し、`window` でページ送りキーを読む `PdfViewer` に背後のページを送らせない
+（`preventDefault` はしないのでブラウザのショートカットは生きている）。**`ConfirmDialog` は
+この限りではない**（開いている間も `←` / `→` がページを送る）。
+
+割り切りが 1 つある。**フレームの中をクリックした後の Escape は届かない**——sandbox の別
+ドキュメントなので原理的に届かない（Escape を `postMessage` で送る橋は、回答の文書にこちらの
+スクリプトを混ぜることになるので足さない）。閉じるボタンが常に効く道。
+
+**HTML 側の**見張りは jsdom の 4 ファイル。`src/front/lib/htmlDiagram.test.ts`（6 本。
+キャプションの書式と doctype）、`HtmlDiagram.test.tsx`（10 本。リンク・sandbox と srcdoc・
+開く前は閉じている・内側クリックで閉じない・Escape・外側クリック・既定文言・body に
+フォーカスがあっても閉じること・ページ送りキーの対 2 本）、`ChatMessageBubble.test.tsx` に
+4 本（フェンスの差し替え・ストリーミング中の据え置き・hljs が割った本文の回収・既定文言）、
+`ChatMessageList.test.tsx` に 1 本（配線）。**E2E は無い**——チャットの送信に実キーが要るため。
+**jsdom は iframe の中身を 1 ピクセルも描かず `srcdoc` も読み込まない**ので、テストは
+`srcdoc` / `sandbox` / `title` という渡し方までしか見ていない。そこは手で見る——メイン
+クローンの `.dev.vars` に実キーを入れて `vp dev` し、mermaid で描けない図（自由なレイアウト・
+並置した対比）を求める質問を送り、リンクを押してフレームの中身と DevTools の Console を見る。
+**2026-09-14 に実ブラウザで確かめた記録**: リンクの文言はモデルが書いた `title` と一致し、
+フレーム内の要素が描画され、フレーム内の `<script>` が走り、開いている間の `→` はページを
+送らず閉じると送り、console の error / warning は 0 件だった（1280×800 px と 390×844 px）。
+
 ### LLM の呼び分け
 
 `src/server/services/llmService.ts`。**OpenAI 互換の API であることだけが前提**で、
 プロバイダごとの差を吸収する層は持たない（あるのは下記の Web 検索の可否 1 つだけ）。
+
+**プロンプトに指示を足すときは位置に制約がある**——上記「図解は mermaid と HTML の 2 通りで
+書かせる」の `MERMAID_RULE` / `TABLE_RULE` / `CITATION_RULES` が区間の区切りで、テストが
+その 2 つの区間の中身を固定している。
 
 | モード      | エンドポイント                                                              |
 | ----------- | --------------------------------------------------------------------------- |
