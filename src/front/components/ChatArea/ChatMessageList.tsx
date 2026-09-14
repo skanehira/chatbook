@@ -103,6 +103,9 @@ export function ChatMessageList({
 
       {isStreaming && streamingContent && (
         <ChatMessageBubble
+          // A fence arrives a token at a time, so for most of this answer's
+          // life the markdown holds half of one
+          streaming
           message={{
             role: "assistant",
             content: streamingContent,

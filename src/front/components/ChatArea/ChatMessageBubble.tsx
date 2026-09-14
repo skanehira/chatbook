@@ -5,9 +5,11 @@ import rehypeHighlight from "rehype-highlight";
 import type { ChatMessage } from "../../../shared/schemas/chat";
 import type { Citation } from "../../../shared/schemas/citation";
 import { CitationLink } from "./CitationLink";
+import { HtmlDiagram } from "./HtmlDiagram";
 import { MermaidBlock } from "./MermaidBlock";
 import { stripSources } from "../../../shared/lib/stripSources";
 import { citationIdFromHref, linkifyCitationRefs } from "../../lib/citationRefs";
+import { captionFromMeta } from "../../lib/htmlDiagram";
 
 /** The `<pre>` node react-markdown hands over, holding the fence's `<code>` child. */
 type FenceNode = NonNullable<ExtraProps["node"]>;
@@ -84,6 +86,8 @@ function citationAnchor(citations: Citation[] | null | undefined) {
 interface ChatMessageBubbleProps {
   /** Only what the bubble renders; a streaming answer has no id or timestamp yet. */
   message: Pick<ChatMessage, "role" | "content" | "citations">;
+  /** True while tokens are still arriving, when a fence may be half-written. */
+  streaming?: boolean;
 }
 
 /**
@@ -111,24 +115,6 @@ const MARKDOWN_COMPONENTS = {
         {...props}
       />
     ),
-  // A mermaid fence is swapped for the diagram it describes. The swap happens
-  // here rather than in `code` so the drawn diagram is not boxed inside the
-  // dark <pre> a code block wears.
-  //
-  // A fence naming no language is left classless by rehype-highlight, so `code`
-  // above reads it as inline and dresses it as a pale chip — unreadable against
-  // this dark background. The chip is undressed from here, where the fence is
-  // known to be a block. Fences highlight.js did touch keep their `hljs` look.
-  pre: ({ node, ...props }: { node?: FenceNode }) => {
-    const plain = (
-      <pre
-        className="mb-2 overflow-x-auto rounded bg-gray-800 p-2 font-mono text-xs text-gray-100 last:mb-0 [&_code:not(.hljs)]:block [&_code:not(.hljs)]:bg-transparent [&_code:not(.hljs)]:p-0"
-        {...props}
-      />
-    );
-    const diagram = fenceSource(node, "mermaid");
-    return diagram === null ? plain : <MermaidBlock code={diagram} fallback={plain} />;
-  },
   blockquote: withClass(
     "blockquote",
     "mb-2 border-l-2 border-gray-300 pl-2 text-gray-600 last:mb-0",
@@ -145,13 +131,64 @@ const MARKDOWN_COMPONENTS = {
   hr: withClass("hr", "my-2 border-gray-300"),
 };
 
-export function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
+/** The caption a fence wrote after its language, e.g. ```html title="…". */
+function fenceCaption(node: FenceNode | undefined): string | null {
+  const code = node?.children[0];
+  if (code?.type !== "element") return null;
+
+  // mdast-util-to-hast parks whatever followed the language on the element
+  const meta = code.data?.meta;
+  return typeof meta === "string" ? captionFromMeta(meta) : null;
+}
+
+/**
+ * The `pre` renderer for one answer.
+ *
+ * A fence is swapped for what it stands for rather than shown as the code it
+ * was written in: a mermaid fence for the diagram it describes, an html fence
+ * for the link that opens the document it holds. Both swaps happen here rather
+ * than in `code`, so neither is boxed inside the dark <pre> a code block wears.
+ *
+ * A fence naming no language is left classless by rehype-highlight, so `code`
+ * above reads it as inline and dresses it as a pale chip — unreadable against
+ * this dark background. The chip is undressed from here, where the fence is
+ * known to be a block. Fences highlight.js did touch keep their `hljs` look.
+ */
+function fenceRenderer(streaming: boolean) {
+  return function Fence({ node, ...props }: { node?: FenceNode }) {
+    const plain = (
+      <pre
+        className="mb-2 overflow-x-auto rounded bg-gray-800 p-2 font-mono text-xs text-gray-100 last:mb-0 [&_code:not(.hljs)]:block [&_code:not(.hljs)]:bg-transparent [&_code:not(.hljs)]:p-0"
+        {...props}
+      />
+    );
+
+    const diagram = fenceSource(node, "mermaid");
+    if (diagram !== null) return <MermaidBlock code={diagram} fallback={plain} />;
+
+    // While the tokens are still arriving the fence holds half a document, so
+    // it goes on being shown as the code it would have been shown as anyway,
+    // and the link arrives with the finished answer.
+    const figure = fenceSource(node, "html");
+    if (figure !== null && !streaming) {
+      return <HtmlDiagram html={figure} caption={fenceCaption(node)} />;
+    }
+
+    return plain;
+  };
+}
+
+export function ChatMessageBubble({ message, streaming = false }: ChatMessageBubbleProps) {
   const isUser = message.role === "user";
   const citations = message.citations;
 
   const components = useMemo(
-    () => ({ ...MARKDOWN_COMPONENTS, a: citationAnchor(citations) }),
-    [citations],
+    () => ({
+      ...MARKDOWN_COMPONENTS,
+      a: citationAnchor(citations),
+      pre: fenceRenderer(streaming),
+    }),
+    [citations, streaming],
   );
 
   const body = useMemo(() => {
