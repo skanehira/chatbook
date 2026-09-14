@@ -12,15 +12,15 @@ import { citationIdFromHref, linkifyCitationRefs } from "../../lib/citationRefs"
 /** The `<pre>` node react-markdown hands over, holding the fence's `<code>` child. */
 type FenceNode = NonNullable<ExtraProps["node"]>;
 
-/** The diagram source of a ```mermaid fence, or null for any other block. */
-function mermaidFenceSource(node: FenceNode | undefined): string | null {
+/** What a fenced block of the given language holds, or null for any other block. */
+function fenceSource(node: FenceNode | undefined, language: string): string | null {
   const code = node?.children[0];
   if (code?.type !== "element") return null;
 
-  // rehype-highlight leaves the fence's `language-mermaid` in place and adds
-  // `hljs` next to it, so the class list has to be searched
+  // rehype-highlight leaves the fence's `language-x` in place and adds `hljs`
+  // next to it, so the class list has to be searched
   const classes = code.properties.className;
-  if (!Array.isArray(classes) || !classes.includes("language-mermaid")) return null;
+  if (!Array.isArray(classes) || !classes.includes(`language-${language}`)) return null;
 
   const source = code.children[0];
   return source?.type === "text" ? source.value : null;
@@ -111,7 +111,7 @@ const MARKDOWN_COMPONENTS = {
         {...props}
       />
     );
-    const diagram = mermaidFenceSource(node);
+    const diagram = fenceSource(node, "mermaid");
     return diagram === null ? plain : <MermaidBlock code={diagram} fallback={plain} />;
   },
   blockquote: withClass(
