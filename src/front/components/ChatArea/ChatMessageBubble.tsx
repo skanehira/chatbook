@@ -12,6 +12,22 @@ import { citationIdFromHref, linkifyCitationRefs } from "../../lib/citationRefs"
 /** The `<pre>` node react-markdown hands over, holding the fence's `<code>` child. */
 type FenceNode = NonNullable<ExtraProps["node"]>;
 
+/**
+ * Every character under a node, wherever highlight.js put it.
+ *
+ * A fence naming a language highlight.js knows — `html` among them, through its
+ * `xml` grammar — comes back as a tree of `hljs-*` spans rather than as one text
+ * node, so the source has to be gathered back from wherever the tokens were
+ * split. What comes back is the answer's own text: highlighting splits, it does
+ * not rewrite.
+ */
+function textOf(node: FenceNode["children"][number]): string {
+  if (node.type === "text") return node.value;
+  if (node.type === "element") return node.children.map(textOf).join("");
+
+  return "";
+}
+
 /** What a fenced block of the given language holds, or null for any other block. */
 function fenceSource(node: FenceNode | undefined, language: string): string | null {
   const code = node?.children[0];
@@ -22,8 +38,7 @@ function fenceSource(node: FenceNode | undefined, language: string): string | nu
   const classes = code.properties.className;
   if (!Array.isArray(classes) || !classes.includes(`language-${language}`)) return null;
 
-  const source = code.children[0];
-  return source?.type === "text" ? source.value : null;
+  return textOf(code);
 }
 
 /**
