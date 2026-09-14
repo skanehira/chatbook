@@ -31,6 +31,22 @@ describe("HtmlDiagram", () => {
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
   });
 
+  it("keeps the document closed until the reader takes the link", () => {
+    showDiagram();
+
+    expect(screen.getByRole("button", { name: CAPTION })).toBeInTheDocument();
+    expect(screen.queryByTitle(CAPTION)).toBeNull();
+  });
+
+  it("stays open when the reader clicks inside the figure", async () => {
+    const user = showDiagram();
+    await user.click(screen.getByRole("button", { name: CAPTION }));
+
+    await user.click(screen.getByRole("heading", { name: CAPTION }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
   it("closes the popup on escape", async () => {
     const user = showDiagram();
     await user.click(screen.getByRole("button", { name: CAPTION }));

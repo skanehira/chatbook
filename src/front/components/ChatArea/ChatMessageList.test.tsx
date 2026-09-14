@@ -95,6 +95,24 @@ describe("ChatMessageList", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
+  // The list tells the bubble that this answer is still being typed, and a
+  // fence arriving a token at a time is not yet something to offer. This is the
+  // other half of the bubble's own pair: drop the flag here and a reader is
+  // handed a link to a document that is still being written.
+  it("keeps an html fence in a streaming answer as the code it is written in", () => {
+    const { container } = render(
+      <ChatMessageList
+        messages={[question]}
+        streamingContent={"```html\n<div>A</div>\n```"}
+        isStreaming={true}
+        onQuote={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector("pre")?.textContent).toBe("<div>A</div>\n");
+    expect(screen.queryByRole("button", { name: "図解を見る" })).toBeNull();
+  });
+
   it("shows only the finished conversation when nothing is streaming", () => {
     const answer: ChatMessage = {
       id: "m2",

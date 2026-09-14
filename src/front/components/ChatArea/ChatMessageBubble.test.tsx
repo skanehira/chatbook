@@ -125,6 +125,12 @@ describe("ChatMessageBubble", () => {
     expect(container.querySelector("pre")).toBeNull();
   });
 
+  it("names the link 図解を見る when the fence carries no caption", () => {
+    render(<ChatMessageBubble message={message({ content: "```html\n<div>A</div>\n```" })} />);
+
+    expect(screen.getByRole("button", { name: "図解を見る" })).toBeInTheDocument();
+  });
+
   // The fence arrives a token at a time, so for most of the answer's life it
   // holds half a document
   it("shows an html fence as code while the answer is still streaming", () => {
