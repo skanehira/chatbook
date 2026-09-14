@@ -204,8 +204,10 @@ function between(prompt: string, start: string, end: string): string {
   return prompt.slice(prompt.indexOf(start) + start.length, prompt.indexOf(end)).trim();
 }
 
-/** The two fixed lines the web-search instruction sits between. */
+/** The fixed lines the instructions that change sit between. */
 const TABLE_RULE = "- For tabular comparisons, use a markdown table, not a diagram.";
+const MERMAID_RULE =
+  "- When a diagram helps, write it as a ```mermaid fenced code block using flowchart, sequenceDiagram or stateDiagram-v2 syntax valid in Mermaid 11. Invalid mermaid is shown to the reader as raw code, so double-check the syntax.";
 const CITATION_RULES = "When answering, follow these citation rules strictly:";
 
 describe("buildSystemPrompt", () => {
@@ -312,6 +314,15 @@ describe("buildSystemPrompt", () => {
   it("lets the model reach for the web past an excerpt when search is on", () => {
     expect(between(buildSystemPrompt(CHAPTER, PASSAGE, true), TABLE_RULE, CITATION_RULES)).toBe(
       "When the shown pages do not contain enough information to answer the question, you may use web search to find additional context. Always indicate when you are using external sources.",
+    );
+  });
+
+  // mermaid stays the first choice wherever it can draw the figure; this is
+  // what an answer reaches for when it cannot. The caption it writes is what
+  // the reader's link says — src/front/lib/htmlDiagram.ts reads it back.
+  it("offers the model html for the figures mermaid cannot draw", () => {
+    expect(between(buildSystemPrompt(WHOLE_BOOK, PASSAGE, true), MERMAID_RULE, TABLE_RULE)).toBe(
+      '- When mermaid cannot draw it — a free-form layout, two structures side by side, a chart it has no syntax for — write the diagram as a ```html fenced code block instead, captioned so the reader knows what they are opening: ```html title="キャッシュの流れ". They never see this code, only a link that opens the document in a popup, so write a self-contained document — styles and scripts inline, nothing loaded from outside, nothing kept in browser storage.',
     );
   });
 });
