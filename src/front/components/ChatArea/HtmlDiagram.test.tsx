@@ -47,6 +47,35 @@ describe("HtmlDiagram", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
+  // jsdom has no layout, so what the reader sees of the size is the pressed
+  // state. That the popup really grows is checked in a browser.
+  it("offers to give the figure the whole screen", async () => {
+    const user = showDiagram();
+    await user.click(screen.getByRole("button", { name: CAPTION }));
+
+    expect(screen.getByRole("button", { name: "最大化" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("reports the figure filling the screen while it is", async () => {
+    const user = showDiagram();
+    await user.click(screen.getByRole("button", { name: CAPTION }));
+
+    await user.click(screen.getByRole("button", { name: "最大化" }));
+    expect(screen.getByRole("button", { name: "最大化" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(screen.getByRole("button", { name: "最大化" }));
+    expect(screen.getByRole("button", { name: "最大化" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("puts the maximize toggle to the left of the close button", async () => {
+    const user = showDiagram();
+    await user.click(screen.getByRole("button", { name: CAPTION }));
+
+    const maximize = screen.getByRole("button", { name: "最大化" });
+
+    expect(maximize.nextElementSibling).toBe(screen.getByRole("button", { name: "図解を閉じる" }));
+  });
+
   it("closes the popup on escape", async () => {
     const user = showDiagram();
     await user.click(screen.getByRole("button", { name: CAPTION }));

@@ -5,6 +5,31 @@ import { asStandaloneDocument } from "../../lib/htmlDiagram";
 /** What the link says when the fence named its diagram nothing. */
 const DEFAULT_CAPTION = "図解を見る";
 
+/** Both header buttons: the tap target this app gives a finger, and the same hover. */
+const HEADER_BUTTON =
+  "flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-gray-500 hover:text-gray-800";
+
+/** Corner brackets, pointing out while the figure is not yet filling the screen. */
+function MaximizeIcon({ maximized }: { maximized: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-5 w-5 fill-none stroke-current stroke-[1.7]"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path
+        d={
+          maximized
+            ? "M4 9h5V4M20 9h-5V4M20 15h-5v5M4 15h5v5"
+            : "M9 4H4v5M15 4h5v5M15 20h5v-5M9 20H4v-5"
+        }
+      />
+    </svg>
+  );
+}
+
 interface HtmlDiagramProps {
   /** The fence's contents: the document the popup renders. */
   html: string;
@@ -46,6 +71,11 @@ interface DiagramPopupProps {
 }
 
 function DiagramPopup({ html, label, onClose }: DiagramPopupProps) {
+  // Nowhere to keep this: the popup is thrown away when it closes, so the next
+  // one opens at the size the figure was given rather than the one the reader
+  // last chose — the same as the chat's maximize toggle.
+  const [maximized, setMaximized] = useState(false);
+
   // Escape is read off the document rather than off this panel, the way
   // ConfirmDialog reads it off itself: a click on the header leaves focus on
   // the body, which no wrapper's onKeyDown ever sees. (A click inside the frame
@@ -77,18 +107,38 @@ function DiagramPopup({ html, label, onClose }: DiagramPopupProps) {
         role="dialog"
         aria-modal="true"
         aria-label={label}
-        className="flex h-[80dvh] w-full md:w-4/5 flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+        className={`flex flex-col overflow-hidden rounded-lg bg-white shadow-xl ${
+          // Filling the backdrop's box leaves its gutter, and with it the
+          // click-outside way out, rather than covering the screen entirely
+          maximized ? "h-full w-full" : "h-[80dvh] w-full md:w-4/5"
+        }`}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-gray-200 pl-4">
-          <h2 className="truncate text-sm font-semibold text-gray-800">{label}</h2>
+          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-800">{label}</h2>
+          <button
+            type="button"
+            onClick={() => setMaximized((maximized) => !maximized)}
+            aria-label="最大化"
+            aria-pressed={maximized}
+            className={HEADER_BUTTON}
+          >
+            <MaximizeIcon maximized={maximized} />
+          </button>
           <button
             type="button"
             autoFocus
             onClick={onClose}
             aria-label="図解を閉じる"
-            className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center text-xl text-gray-500 hover:text-gray-800"
+            className={HEADER_BUTTON}
           >
-            <span aria-hidden>×</span>
+            <svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              className="h-5 w-5 fill-none stroke-current stroke-[1.7]"
+              strokeLinecap="round"
+            >
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
           </button>
         </div>
         {/* allow-scripts without allow-same-origin: the frame draws itself
