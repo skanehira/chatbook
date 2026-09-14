@@ -77,7 +77,7 @@ function DiagramPopup({ html, label, onClose }: DiagramPopupProps) {
         role="dialog"
         aria-modal="true"
         aria-label={label}
-        className="flex h-[80dvh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+        className="flex h-[80dvh] w-full md:w-4/5 flex-col overflow-hidden rounded-lg bg-white shadow-xl"
       >
         <div className="flex shrink-0 items-center justify-between border-b border-gray-200 pl-4">
           <h2 className="truncate text-sm font-semibold text-gray-800">{label}</h2>
