@@ -184,8 +184,7 @@ const PASSAGE = "global network";
 /** A book small enough that its excerpt is the whole text. */
 const WHOLE_BOOK: DocumentExcerpt = {
   text: BOOK,
-  startPage: 1,
-  endPage: 1,
+  ranges: [{ startPage: 1, endPage: 1 }],
   totalPages: 1,
   isPartial: false,
 };
@@ -193,9 +192,19 @@ const WHOLE_BOOK: DocumentExcerpt = {
 /** A chapter cut out of a longer book. */
 const CHAPTER: DocumentExcerpt = {
   text: BOOK,
-  startPage: 5,
-  endPage: 8,
+  ranges: [{ startPage: 5, endPage: 8 }],
   totalPages: 12,
+  isPartial: true,
+};
+
+/** Two chapters of a longer book, with the pages between them left out. */
+const PARTS: DocumentExcerpt = {
+  text: BOOK,
+  ranges: [
+    { startPage: 5, endPage: 8 },
+    { startPage: 35, endPage: 40 },
+  ],
+  totalPages: 60,
   isPartial: true,
 };
 
@@ -315,6 +324,58 @@ describe("buildSystemPrompt", () => {
     expect(between(buildSystemPrompt(CHAPTER, PASSAGE, true), TABLE_RULE, CITATION_RULES)).toBe(
       "When the shown pages do not contain enough information to answer the question, you may use web search to find additional context. Always indicate when you are using external sources.",
     );
+  });
+
+  it("tells the model its pages arrive in parts, so it does not quote across the gap", () => {
+    // The chapters a reader picked can be pages apart, and what rides between
+    // them in the prompt is nothing: a quote the model joins across that seam
+    // is a passage the book does not contain, and the page lookup then has no
+    // page to send the reader to.
+    const prompt = buildSystemPrompt(PARTS, PASSAGE, true);
+
+    expect(
+      between(
+        prompt,
+        "You are a helpful AI assistant analyzing a PDF document.",
+        "--- DOCUMENT START ---",
+      ),
+    ).toBe(
+      "Use the following excerpt (pages 5-8, 35-40 of the 60-page document) as your primary context:",
+    );
+    expect(
+      between(
+        prompt,
+        "- Answer questions based primarily on the document content.",
+        "- Keep answers concise",
+      ),
+    ).toBe(
+      "- You are shown only pages 5-8, 35-40; the rest of the document is not visible to you. When the shown pages do not contain the answer, say it is not in the shown pages rather than not in the document, then provide what you know.",
+    );
+    expect(between(prompt, "Instructions:", "- Answer questions based primarily")).toBe(
+      "- The pages you are shown arrive in 2 parts (pages 5-8, 35-40); the pages between them are not visible to you. Quote from within one part rather than joining the end of one to the start of the next.",
+    );
+  });
+
+  it("says nothing about parts when the pages run together", () => {
+    // One run is not a thing to warn about, and a model told to mind a seam
+    // that is not there quotes more cautiously than the excerpt needs.
+    expect(
+      between(
+        buildSystemPrompt(CHAPTER, PASSAGE, true),
+        "Instructions:",
+        "- Answer questions based primarily",
+      ),
+    ).toBe("");
+  });
+
+  it("asks about the book itself with no passage under the question", () => {
+    const prompt = buildSystemPrompt(WHOLE_BOOK, null, true);
+
+    // Nothing to point at, so nothing claimed: the model is not told a passage
+    // was highlighted, because none was.
+    expect(between(prompt, "--- DOCUMENT START ---", "--- DOCUMENT END ---")).toBe(BOOK);
+    expect(prompt).not.toContain("--- HIGHLIGHTED PASSAGE ---");
+    expect(prompt).not.toContain("The user has highlighted this specific passage");
   });
 
   // mermaid stays the first choice wherever it can draw the figure; this is

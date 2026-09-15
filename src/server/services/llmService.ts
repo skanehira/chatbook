@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import type { ConversationTurn, LlmMessage } from "./chatService";
-import type { DocumentExcerpt } from "./documentExcerpt";
+import { describePages, type DocumentExcerpt } from "./documentExcerpt";
 
 /**
  * The Responses API events this reader acts on.
@@ -126,23 +126,49 @@ interface StreamCallbacks {
  */
 export function buildSystemPrompt(
   excerpt: DocumentExcerpt,
-  selectedText: string,
+  /**
+   * The passage the question is about, or null when it is about the document
+   * itself — a summary, or a question about the book as a whole.
+   */
+  selectedText: string | null,
   useWebSearch: boolean,
 ): string {
-  const { text, startPage, endPage, totalPages, isPartial } = excerpt;
+  const { text, ranges, totalPages, isPartial } = excerpt;
+  const pages = describePages(ranges);
 
   const contextName = isPartial
-    ? `excerpt (pages ${startPage}-${endPage} of the ${totalPages}-page document)`
+    ? `excerpt (pages ${pages} of the ${totalPages}-page document)`
     : "document";
   // "the shown pages do" / "the document does": the subject and its verb
   // travel together so the two variants stay grammatical in every slot.
   const scopeDoes = isPartial ? "the shown pages do" : "the document does";
   const missingAnswerInstruction = isPartial
-    ? `- You are shown only pages ${startPage}-${endPage}; the rest of the document is not visible to you. When the shown pages do not contain the answer, say it is not in the shown pages rather than not in the document, then provide what you know.`
+    ? `- You are shown only pages ${pages}; the rest of the document is not visible to you. When the shown pages do not contain the answer, say it is not in the shown pages rather than not in the document, then provide what you know.`
     : `- When the document does not contain the answer, say so clearly, then provide what you know.`;
   const webSearchInstruction = useWebSearch
     ? `\n\nWhen ${scopeDoes} not contain enough information to answer the question, you may use web search to find additional context. Always indicate when you are using external sources.`
     : `\n\nRespond using only the ${isPartial ? "excerpt" : "document"} context. If ${scopeDoes} not contain the answer, say so clearly.`;
+
+  // Nothing at all when there is no passage: a question put to the book itself
+  // has none, and telling the model one was highlighted would have it hunting
+  // for a passage that is not there.
+  const highlight =
+    selectedText === null
+      ? ""
+      : `The user has highlighted this specific passage and is asking about it:
+--- HIGHLIGHTED PASSAGE ---
+${selectedText}
+--- END HIGHLIGHTED PASSAGE ---
+
+`;
+
+  // Only where there is a gap to mind: one run of pages arrives whole, and a
+  // warning about a seam that is not there makes the model quote more
+  // cautiously than the excerpt needs.
+  const parts =
+    ranges.length > 1
+      ? `- The pages you are shown arrive in ${ranges.length} parts (pages ${pages}); the pages between them are not visible to you. Quote from within one part rather than joining the end of one to the start of the next.\n`
+      : "";
 
   return `You are a helpful AI assistant analyzing a PDF document.
 Use the following ${contextName} as your primary context:
@@ -151,13 +177,8 @@ Use the following ${contextName} as your primary context:
 ${text}
 --- DOCUMENT END ---
 
-The user has highlighted this specific passage and is asking about it:
---- HIGHLIGHTED PASSAGE ---
-${selectedText}
---- END HIGHLIGHTED PASSAGE ---
-
-Instructions:
-- Answer questions based primarily on the document content.
+${highlight}Instructions:
+${parts}- Answer questions based primarily on the document content.
 ${missingAnswerInstruction}
 - Keep answers concise and well-structured.
 - When a diagram helps, write it as a \`\`\`mermaid fenced code block using flowchart, sequenceDiagram or stateDiagram-v2 syntax valid in Mermaid 11. Invalid mermaid is shown to the reader as raw code, so double-check the syntax.
