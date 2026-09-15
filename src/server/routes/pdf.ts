@@ -16,19 +16,9 @@ import {
   type IdClock,
 } from "../services/pdfService";
 
-import {
-  buildSystemPrompt,
-  resolveLlmConfig,
-  streamChatCompletion,
-  streamResponseWithWebSearch,
-  type StreamUsage,
-} from "../services/llmService";
-import {
-  buildConversation,
-  findPageNumber,
-  parseCitations,
-  readCitations,
-} from "../services/chatService";
+import { buildSystemPrompt, resolveLlmConfig } from "../services/llmService";
+import { findPageNumber, readCitations } from "../services/chatService";
+import { streamChatReply } from "../services/chatStream";
 import {
   bookOutlineSchema,
   locateQuerySchema,
@@ -40,7 +30,7 @@ import {
   selectionSearchQuerySchema,
 } from "../../shared/schemas/selection";
 import { sendChatRequestSchema } from "../../shared/schemas/chat";
-import type { ErrorCode, ErrorPayload } from "../../shared/schemas/error";
+import type { ErrorCode } from "../../shared/schemas/error";
 import { storageFailure, type ServiceError } from "../services/serviceError";
 import { readStoredOutline, selectExcerpt } from "../services/documentExcerpt";
 import { validate } from "./validation";
@@ -611,150 +601,43 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           );
           const systemPrompt = buildSystemPrompt(excerpt, sel.selectedText, useWebSearch);
 
-          // Set up SSE streaming
-          const encoder = new TextEncoder();
-          let fullResponse = "";
-          // Leaving the chat cancels the response body. That only means "stop
-          // sending"; the answer is still read to the end and saved below, so
-          // reopening the highlight shows it.
-          let clientGone = false;
-          let finished!: Promise<void>;
+          return streamChatReply({
+            llmConfig,
+            systemPrompt,
+            // The history read above holds only the earlier turns:
+            // `buildConversation` appends this question itself.
+            history: history.map((turn) => ({ role: turn.role, content: turn.content })),
+            question: content,
+            useWebSearch,
+            fullText,
+            pageCount: pdfRow.pageCount,
+            save: async (answer, citations, usage) => {
+              const assistantMsgId = idClock.newId();
+              const saved = await ResultAsync.fromPromise(
+                d1Db
+                  .insert(chatMessages)
+                  .values({
+                    id: assistantMsgId,
+                    selectionId: selId,
+                    role: "assistant",
+                    content: answer,
+                    citations: JSON.stringify(citations),
+                    inputTokens: usage.inputTokens,
+                    outputTokens: usage.outputTokens,
+                    cachedInputTokens: usage.cachedInputTokens,
+                    createdAt: idClock.now(),
+                  })
+                  .run(),
+                storageFailure,
+              );
 
-          const stream = new ReadableStream({
-            start(controller) {
-              // Writing to a cancelled stream is allowed to throw, and a throw here
-              // would escape into the AI service's own catch and lose the answer
-              // before it is saved. Swallowing it is what keeps the save reachable.
-              const send = (payload: string) => {
-                if (clientGone) return;
-                try {
-                  controller.enqueue(encoder.encode(payload));
-                } catch {
-                  // A cancel can beat its own handler, so a refused write means the
-                  // client is gone too
-                  clientGone = true;
-                }
-              };
-              const closeStream = () => {
-                if (clientGone) return;
-                try {
-                  controller.close();
-                } catch {
-                  clientGone = true;
-                }
-              };
-
-              const callbacks = {
-                onToken(token: string) {
-                  fullResponse += token;
-                  send(`event: token\ndata: ${JSON.stringify({ content: token })}\n\n`);
-                },
-                async onDone(usage: StreamUsage) {
-                  // Parse citations with page number lookup for PDF citations
-                  const citations = parseCitations(fullResponse, fullText, pdfRow.pageCount);
-
-                  // Save the answer before telling the client about it, so a client
-                  // that already left cannot stop the save
-                  const assistantMsgId = idClock.newId();
-                  const saved = await ResultAsync.fromPromise(
-                    d1Db
-                      .insert(chatMessages)
-                      .values({
-                        id: assistantMsgId,
-                        selectionId: selId,
-                        role: "assistant",
-                        content: fullResponse,
-                        citations: JSON.stringify(citations),
-                        inputTokens: usage.inputTokens,
-                        outputTokens: usage.outputTokens,
-                        cachedInputTokens: usage.cachedInputTokens,
-                        createdAt: idClock.now(),
-                      })
-                      .run(),
-                    storageFailure,
-                  );
-
-                  // An answer that was not stored is gone the moment the chat is
-                  // reopened. Sending `done` for it would show the reader a
-                  // finished conversation that empties itself on the next visit.
-                  if (saved.isErr()) {
-                    console.error("Failed to save assistant message:", saved.error.cause);
-                    send(
-                      `event: error\ndata: ${JSON.stringify({
-                        code: "CHAT_SAVE_FAILED" satisfies ErrorCode,
-                        message: "The answer could not be saved",
-                      } satisfies ErrorPayload)}\n\n`,
-                    );
-                    closeStream();
-                    return;
-                  }
-
-                  for (const citation of citations) {
-                    send(`event: citation\ndata: ${JSON.stringify(citation)}\n\n`);
-                  }
-                  send(
-                    `event: done\ndata: ${JSON.stringify({ messageId: assistantMsgId, usage })}\n\n`,
-                  );
-                  closeStream();
-                },
-                onError(err: Error) {
-                  send(
-                    `event: error\ndata: ${JSON.stringify({
-                      code: "AI_API_ERROR" satisfies ErrorCode,
-                      message: err.message,
-                    } satisfies ErrorPayload)}\n\n`,
-                  );
-                  closeStream();
-                },
-              };
-
-              finished = (async () => {
-                try {
-                  // Both endpoints get the same conversation; they differ only
-                  // in where the system prompt rides (`instructions` vs a turn)
-                  const conversation = buildConversation(
-                    history.map((h) => ({ role: h.role, content: h.content })),
-                    content,
-                  );
-                  if (useWebSearch) {
-                    await streamResponseWithWebSearch(
-                      llmConfig,
-                      systemPrompt,
-                      conversation,
-                      callbacks,
-                    );
-                  } else {
-                    await streamChatCompletion(
-                      llmConfig,
-                      [{ role: "system", content: systemPrompt }, ...conversation],
-                      callbacks,
-                    );
-                  }
-                } catch (err) {
-                  send(
-                    `event: error\ndata: ${JSON.stringify({
-                      code: "AI_STREAM_ERROR" satisfies ErrorCode,
-                      message: String(err),
-                    } satisfies ErrorPayload)}\n\n`,
-                  );
-                  closeStream();
-                }
-              })();
+              if (saved.isErr()) {
+                console.error("Failed to save assistant message:", saved.error.cause);
+                return null;
+              }
+              return { messageId: assistantMsgId };
             },
-            cancel() {
-              clientGone = true;
-            },
-          });
-
-          // The save has to outlive the request the client just walked away from
-          c.executionCtx.waitUntil(finished);
-
-          return new Response(stream, {
-            headers: {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-            },
+            waitUntil: (work) => c.executionCtx.waitUntil(work),
           });
         },
       )
