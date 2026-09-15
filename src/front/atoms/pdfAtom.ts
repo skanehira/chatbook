@@ -1,6 +1,17 @@
 import { atom } from "jotai";
+import type { ScopeChapter } from "../lib/chatScope";
 
 export const currentPageAtom = atom<number>(1);
+
+/**
+ * The book's chapters, each with the pages it covers.
+ *
+ * MOCK: the server holds this very outline already — it was stored at upload
+ * and is what chat cuts excerpts by — so the spans belong beside the cutter,
+ * handed out with the book. Until that endpoint exists the only copy to hand is
+ * the one the viewer reads out of the open document, reported from there.
+ */
+export const outlineChaptersAtom = atom<ScopeChapter[]>([]);
 
 /** Rendered page size, plus the page's intrinsic width at scale 1. */
 export interface PageViewport {

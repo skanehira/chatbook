@@ -3,7 +3,9 @@ import { createStore } from "jotai";
 import {
   abortChatStreamAtom,
   activeSelectionAtom,
+  bookChatOpenAtom,
   chatAbortControllerAtom,
+  chatFaceAtom,
   isStreamingAtom,
   selectionDeletedAtom,
   streamingContentAtom,
@@ -47,6 +49,29 @@ describe("abortChatStreamAtom", () => {
     store.set(abortChatStreamAtom);
 
     expect(store.get(streamingContentAtom)).toBe("次の回答の書き出し");
+  });
+});
+
+describe("chatFaceAtom", () => {
+  it("shows the list while neither a highlight nor the book's own chat is open", () => {
+    const store = createStore();
+
+    expect(store.get(chatFaceAtom)).toBe("list");
+  });
+
+  it("shows the book's own conversation once it is the one that was opened", () => {
+    const store = createStore();
+    store.set(bookChatOpenAtom, true);
+
+    expect(store.get(chatFaceAtom)).toBe("book");
+  });
+
+  it("shows the highlight's conversation over the book's when both are open", () => {
+    const store = createStore();
+    store.set(activeSelectionAtom, OPEN_CHAT);
+    store.set(bookChatOpenAtom, true);
+
+    expect(store.get(chatFaceAtom)).toBe("highlight");
   });
 });
 

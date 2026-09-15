@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import type { ChatMessage } from "../../shared/schemas/chat";
+import type { ScopeChapter } from "../lib/chatScope";
 
 /** The highlighted passage the current conversation is about. */
 export interface ActiveSelection {
@@ -9,6 +10,42 @@ export interface ActiveSelection {
 }
 
 export const activeSelectionAtom = atom<ActiveSelection | null>(null);
+
+/**
+ * Whether the panel is showing the book's own conversation rather than a
+ * highlight's.
+ *
+ * A book has one of these, not one per passage: it is what the reader asks
+ * about the work itself — a summary, what it argues, where a topic is treated —
+ * when there is nothing on the page they want to point at. Which chapters of it
+ * a question reaches is `chatScopeAtom`, and the conversation itself lives in
+ * the same atoms the highlight's does.
+ */
+export const bookChatOpenAtom = atom<boolean>(false);
+
+/**
+ * The chapters the next question is aimed at. Empty is the whole book.
+ *
+ * Held per question rather than per conversation: a reader who has just had the
+ * book summarised then asks about one chapter in the same thread, so the scope
+ * rides with each question instead of dividing the thread in two.
+ */
+export const chatScopeAtom = atom<ScopeChapter[]>([]);
+
+/** Which of the panel's three faces is on screen. */
+export type ChatFace = "list" | "highlight" | "book";
+
+/**
+ * The face the panel shows, derived so the three cannot disagree.
+ *
+ * `openChat` and `openBookChat` each clear the other, but the highlight wins
+ * here as well: it is the narrower request, the one the reader made most
+ * recently, and having it lose would show the book's thread under a passage
+ * they had just picked out.
+ */
+export const chatFaceAtom = atom<ChatFace>((get) =>
+  get(activeSelectionAtom) !== null ? "highlight" : get(bookChatOpenAtom) ? "book" : "list",
+);
 
 /**
  * Whether the panel on the right — the highlight list, or a chat — is showing.
