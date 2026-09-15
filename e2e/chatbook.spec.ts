@@ -81,6 +81,7 @@ async function logIn(page: Page): Promise<void> {
 /** The place the book reports, as much of it as the reset has to undo. */
 type StoredPlace = {
   page: number;
+  bookChat: boolean | null;
   outlineOpen: boolean | null;
   chatPanelOpen: boolean | null;
 } | null;
@@ -89,7 +90,10 @@ type StoredPlace = {
 function resumedElsewhere(place: StoredPlace): boolean {
   return (
     place !== null &&
-    (place.page !== 1 || place.outlineOpen === false || place.chatPanelOpen === false)
+    (place.page !== 1 ||
+      place.bookChat === true ||
+      place.outlineOpen === false ||
+      place.chatPanelOpen === false)
   );
 }
 
@@ -148,7 +152,16 @@ async function openTestBook(page: Page): Promise<string> {
   // which names no page, so an earlier test's place would be where this one
   // opens.
   await page.request.put(`/api/pdf/${pdfId}/reading-state`, {
-    data: { page: 1, selectionId: null, outlineOpen: true, chatPanelOpen: true },
+    // `bookChat` is spelled out because leaving it out keeps whatever was
+    // stored: a conversation about the book itself, left open by an earlier
+    // test, would otherwise be the one this one opens on.
+    data: {
+      page: 1,
+      selectionId: null,
+      bookChat: false,
+      outlineOpen: true,
+      chatPanelOpen: true,
+    },
   });
 
   // Reload only where the reader is showing something the reset has just
@@ -732,7 +745,9 @@ test("marks a passage taken from the right page of a spread on that page", async
   });
   expect(await marksLandInside(page, 5)).toBe(true);
   await expect(page.locator('[data-page-container="4"] .pendingSelection')).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "質問する" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "質問する", exact: true })).toBeVisible({
+    timeout: 10000,
+  });
 });
 
 test("keeps a drag made right to left on the page it was begun on", async ({ page }) => {
@@ -843,7 +858,9 @@ test("a passage can still be selected once the page is zoomed in", async ({ page
 
   const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
   expect(selected.trim().length).toBeGreaterThan(0);
-  await expect(page.getByRole("button", { name: "質問する" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "質問する", exact: true })).toBeVisible({
+    timeout: 10000,
+  });
 
   // The mark is drawn over the line that was dragged, not where an unzoomed
   // text layer would have put it
@@ -1005,7 +1022,9 @@ test("dragging over the page selects text and offers to ask about it", async ({ 
   expect(selected.trim().length).toBeGreaterThan(0);
 
   // The selection opens the question popover
-  await expect(page.getByRole("button", { name: "質問する" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "質問する", exact: true })).toBeVisible({
+    timeout: 10000,
+  });
 });
 
 test("the passage is marked while it is still being dragged", async ({ page }) => {
@@ -1036,7 +1055,9 @@ test("the selected passage stays marked while the question is written", async ({
   await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 12 });
   await page.mouse.up();
 
-  await expect(page.getByRole("button", { name: "質問する" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "質問する", exact: true })).toBeVisible({
+    timeout: 10000,
+  });
 
   // Focusing the question box clears the browser's own selection, so without a
   // mark of our own the reader loses track of what the question is about
@@ -1116,7 +1137,9 @@ test("overshooting a line does not select the rest of the page", async ({ page }
 
   await page.mouse.up();
 
-  await expect(page.getByRole("button", { name: "質問する" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "質問する", exact: true })).toBeVisible({
+    timeout: 10000,
+  });
 
   // The drag covered two lines, so nothing should be marked below the second
   // one. Anything further down means the selection ran off through the DOM.
@@ -1144,7 +1167,9 @@ test("the marked passage stays put once the question box has taken the focus", a
   await dragAlong(page, line, line);
 
   const marks = page.locator(".pendingSelection");
-  await expect(page.getByRole("button", { name: "質問する" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "質問する", exact: true })).toBeVisible({
+    timeout: 10000,
+  });
   const chosen = await lowestMark(marks);
 
   // Long enough for a second settle to have come and gone
@@ -1505,9 +1530,6 @@ test("the chat panel lists the highlights, opens one, and comes back to the list
   await expect(chatPanel.getByPlaceholder("質問を入力...")).toBeHidden();
 });
 
-// MOCK: the book's own conversation has no server side yet — the answer is
-// canned and nothing is stored, so this covers the screen only. It is the
-// ground the real endpoint's test will be written on.
 test("asks the book itself, aiming the question at chapters of its table of contents", async ({
   page,
 }) => {
@@ -1517,6 +1539,7 @@ test("asks the book itself, aiming the question at chapters of its table of cont
   // Nothing is marked in this book, so the list offers both ways to start
   const entry = chatPanel.getByRole("button", { name: "本について質問する" });
   await expect(entry).toBeVisible({ timeout: 60000 });
+  const { sent } = await stubBookConversation(page, "この本の要点です。");
   await entry.click();
 
   // The book's own conversation: no passage under it, and the scope where the
@@ -1543,17 +1566,42 @@ test("asks the book itself, aiming the question at chapters of its table of cont
   await chatPanel.getByPlaceholder("質問を入力...").fill("この章を要約して");
   await chatPanel.getByRole("button", { name: "送信" }).click();
 
-  // The canned answer names the scope it was asked under, which until the
-  // server side exists is the only way to see the scope took effect at all.
-  await expect(
-    chatPanel.getByText(/※モック回答（対象: 第2章 チャットとの連携（9〜12ページ））/),
-  ).toBeVisible({ timeout: 30000 });
-  await expect(chatPanel.getByText("この章を要約して")).toBeVisible();
+  await expect(chatPanel.getByText("承知しました")).toBeVisible({ timeout: 30000 });
+  // What the question was aimed at reaches the server as the pages of the
+  // chapter picked, which is what the excerpt is cut by.
+  expect(sent).toStrictEqual([
+    {
+      content: "この章を要約して",
+      useWebSearch: true,
+      scope: { ranges: [{ startPage: 9, endPage: 12 }] },
+    },
+  ]);
 
   // And the way back leaves the book's conversation for the list
   await chatPanel.getByRole("button", { name: "一覧に戻る" }).click();
   await expect(chatPanel.getByText("チャットを開始するには")).toBeVisible();
   await expect(chatPanel.getByRole("button", { name: "本について質問する" })).toBeVisible();
+});
+
+test("comes back to the book's own conversation when the book is opened again", async ({
+  page,
+}) => {
+  // The conversation is the book's answer rather than the address bar's, so a
+  // reload lands in the thread that was left open rather than on the list.
+  await openTestBook(page);
+  const chatPanel = page.locator("main > div").last();
+  await stubBookConversation(page, "この本の要点です。");
+
+  await chatPanel.getByRole("button", { name: "本について質問する" }).click();
+  await chatPanel.getByPlaceholder("質問を入力...").fill("この本を要約して");
+  await chatPanel.getByRole("button", { name: "送信" }).click();
+  await expect(chatPanel.getByText("承知しました")).toBeVisible({ timeout: 30000 });
+  await placeSaved(page);
+
+  await page.reload();
+
+  await expect(chatPanel.getByText("この本の要点です。")).toBeVisible({ timeout: 60000 });
+  await expect(chatPanel.getByRole("button", { name: "範囲: 本全体" })).toBeVisible();
 });
 
 test("searching the list narrows it to what the server matched", async ({ page }) => {
@@ -1875,6 +1923,51 @@ async function stubConversation(page: Page, answer: string): Promise<{ sent: str
   return { sent };
 }
 
+/**
+ * The book's own conversation, answered and remembered without a model.
+ *
+ * Both directions of the endpoint, as `stubConversation` does for a highlight:
+ * the thread the panel reads on opening the conversation, and the question it
+ * sends. The body each question arrives with is kept, which is how a test sees
+ * what the question was aimed at. `**` does not cross a slash, so this matches
+ * the book's own endpoint and not a highlight's.
+ */
+async function stubBookConversation(
+  page: Page,
+  answer: string,
+): Promise<{ sent: { content: string; scope?: unknown }[] }> {
+  const sent: { content: string; scope?: unknown }[] = [];
+  await page.route("**/api/pdf/*/chats", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      await route.fulfill({
+        json: {
+          selectionId: null,
+          messages: [
+            {
+              id: "stub-answer",
+              role: "assistant",
+              content: answer,
+              citations: null,
+              createdAt: new Date(0).toISOString(),
+            },
+          ],
+        },
+      });
+      return;
+    }
+    sent.push(request.postDataJSON() as { content: string; scope?: unknown });
+    await route.fulfill({
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body:
+        `event: token\ndata: ${JSON.stringify({ content: "承知しました" })}\n\n` +
+        `event: done\ndata: ${JSON.stringify({ messageId: "stub-reply" })}\n\n`,
+    });
+  });
+  return { sent };
+}
+
 /** Drags across the text of an element, the way a reader picks a passage out. */
 async function dragAcross(page: Page, target: Locator) {
   const box = (await target.boundingBox())!;
@@ -2040,7 +2133,9 @@ test("turns the page on a click at the edge, but not on a drag that selected tex
   });
   await page.mouse.up();
 
-  await expect(page.getByRole("button", { name: "質問する" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "質問する", exact: true })).toBeVisible({
+    timeout: 10000,
+  });
   await expect(drawnPage(page, 1).first()).toBeVisible();
 });
 
@@ -2061,13 +2156,15 @@ test("the click that puts the question box away does not also turn the page", as
     steps: 12,
   });
   await page.mouse.up();
-  await expect(page.getByRole("button", { name: "質問する" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "質問する", exact: true })).toBeVisible({
+    timeout: 10000,
+  });
 
   // Low in the pane, clear of the box that opened against the first line
   const dismissY = box.y + box.height * 0.85;
   await page.mouse.click(box.x + box.width * 0.9, dismissY);
 
-  await expect(page.getByRole("button", { name: "質問する" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "質問する", exact: true })).toHaveCount(0);
   await expect(drawnPage(page, 1).first()).toBeVisible();
 
   // The same click again, with nothing left to put away, does turn the page —

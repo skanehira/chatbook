@@ -50,6 +50,7 @@ async function openTestBook(page: Page): Promise<string> {
     selections: { id: string }[];
     readingState: {
       page: number;
+      bookChat: boolean | null;
       outlineOpen: boolean | null;
       chatPanelOpen: boolean | null;
     } | null;
@@ -63,7 +64,16 @@ async function openTestBook(page: Page): Promise<string> {
   // which names no page, so an earlier test's place would be where this one
   // opens.
   await page.request.put(`/api/pdf/${pdfId}/reading-state`, {
-    data: { page: 1, selectionId: null, outlineOpen: true, chatPanelOpen: true },
+    // `bookChat` is spelled out because leaving it out keeps whatever was
+    // stored: a conversation about the book itself, left open by an earlier
+    // test, would otherwise be the one this one opens on.
+    data: {
+      page: 1,
+      selectionId: null,
+      bookChat: false,
+      outlineOpen: true,
+      chatPanelOpen: true,
+    },
   });
 
   // Reload only where the reader is showing something the reset has just
@@ -71,6 +81,7 @@ async function openTestBook(page: Page): Promise<string> {
   const resumedElsewhere =
     readingState !== null &&
     (readingState.page !== 1 ||
+      readingState.bookChat === true ||
       readingState.outlineOpen === false ||
       readingState.chatPanelOpen === false);
   if (selections.length > 0 || resumedElsewhere) {
