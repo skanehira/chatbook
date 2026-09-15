@@ -4,8 +4,11 @@ import { isSubmitKey } from "../../lib/isSubmitKey";
 interface ChatInputProps {
   onSend: (content: string) => void;
   disabled?: boolean;
-  /** The passage the next question is about. */
-  quotedText: string;
+  /**
+   * The passage the next question is about, or null when it is about none —
+   * a question put to the book itself.
+   */
+  quotedText: string | null;
   /**
    * Drops the quote. Absent for the highlight the thread hangs off, which is
    * not the reader's to drop.
@@ -34,23 +37,26 @@ export function ChatInput({ onSend, disabled, quotedText, onClearQuote }: ChatIn
   return (
     <div className="p-3 border-t border-gray-200 bg-white shrink-0">
       {/* Which passage the question is about is otherwise invisible: the
-          selected text is only sent to the model, never shown in the thread */}
-      <div className="mb-2 flex items-start gap-2 rounded-lg bg-gray-100 px-3 py-2">
-        <span aria-hidden="true" className="text-gray-400">
-          ↳
-        </span>
-        <p className="line-clamp-2 flex-1 text-xs text-gray-600">{quotedText}</p>
-        {onClearQuote ? (
-          <button
-            type="button"
-            onClick={() => onClearQuote()}
-            aria-label="引用を取り消す"
-            className="cursor-pointer text-gray-400 hover:text-gray-600"
-          >
-            ×
-          </button>
-        ) : null}
-      </div>
+          selected text is only sent to the model, never shown in the thread.
+          Left out entirely for a question about no passage in particular. */}
+      {quotedText !== null && (
+        <div className="mb-2 flex items-start gap-2 rounded-lg bg-gray-100 px-3 py-2">
+          <span aria-hidden="true" className="text-gray-400">
+            ↳
+          </span>
+          <p className="line-clamp-2 flex-1 text-xs text-gray-600">{quotedText}</p>
+          {onClearQuote ? (
+            <button
+              type="button"
+              onClick={() => onClearQuote()}
+              aria-label="引用を取り消す"
+              className="cursor-pointer text-gray-400 hover:text-gray-600"
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
+      )}
       <div className="flex gap-2">
         <textarea
           value={input}
