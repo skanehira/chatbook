@@ -251,6 +251,28 @@ describe("ChatArea", () => {
     expect(screen.queryByText("チャットを開始するには")).toBeNull();
   });
 
+  it("hands the chapter list's failure to the menu rather than an empty list", async () => {
+    // An empty list of chapters is what a book with no table of contents looks
+    // like, so swallowing the failure would have the menu tell the reader the
+    // book has none.
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "Unexpected server error" } }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    renderChat({ activeSelection: null, bookChatOpen: true });
+
+    await userEvent.click(screen.getByRole("button", { name: /^範囲:/ }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "範囲の一覧を読み込めませんでした: Unexpected server error",
+    );
+    expect(screen.queryByText("この本には目次がありません")).toBeNull();
+  });
+
   it("keeps the scope out of a highlight's conversation, which has a passage to go by instead", () => {
     renderChat();
 

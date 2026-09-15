@@ -142,6 +142,30 @@ describe("ChatScopeMenu", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
+  it("blames the request rather than the book when the chapters could not be read", async () => {
+    // "This book has no table of contents" is a claim about the book: made
+    // because a request failed, it tells the reader something untrue, and the
+    // chapters may well be there on the next try.
+    render(
+      <ChatScopeMenu
+        chapters={[]}
+        chaptersError={new Error("PDF not found")}
+        pageCount={PAGE_COUNT}
+        scope={[]}
+        onChange={() => {}}
+      />,
+    );
+
+    await userEvent.click(trigger());
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "範囲の一覧を読み込めませんでした: PDF not found",
+    );
+    expect(screen.queryByText("この本には目次がありません")).toBeNull();
+    // The whole book is still askable: the reader is not left with nothing.
+    expect(wholeBookRow()).toBeInTheDocument();
+  });
+
   it("shuts on Escape, so the keyboard reader is not left in it", async () => {
     render(menu(CHAPTERS, []));
 

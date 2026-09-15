@@ -64,7 +64,7 @@ export function ChatArea({
   const [activeSelection, setActiveSelection] = useAtom(activeSelectionAtom);
   const setBookChatOpen = useSetAtom(bookChatOpenAtom);
   const [scope, setScope] = useAtom(chatScopeAtom);
-  const { data: chapterList } = useChapters(book?.id);
+  const { data: chapterList, error: chaptersError } = useChapters(book?.id);
   const face = useAtomValue(chatFaceAtom);
   const { highlights, removeHighlight } = useHighlights(book?.id, undefined, deleteHighlight);
   const { query, setQuery, submit, matchedIds, searchError } = useHighlightSearch(
@@ -177,6 +177,7 @@ export function ChatArea({
         {face === "book" && (
           <ChatScopeMenu
             chapters={chapterList?.chapters ?? []}
+            chaptersError={chaptersError as Error | undefined}
             pageCount={book.pageCount}
             scope={scope}
             onChange={setScope}

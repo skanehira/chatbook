@@ -5,6 +5,8 @@ import { chapterLabel, pageRangeLabel, scopeLabel, type ScopeChapter } from "../
 interface ChatScopeMenuProps {
   /** The chapters the book offers; empty for a book whose outline is not known. */
   chapters: ScopeChapter[];
+  /** Why the chapters could not be read, if they could not. */
+  chaptersError?: Error;
   /** The pages the whole book runs to, for the row that asks about all of it. */
   pageCount: number;
   /** The chapters the next question is aimed at. Empty is the whole book. */
@@ -23,7 +25,13 @@ interface ChatScopeMenuProps {
  * one row with the way back to the list — hence a chip that counts the rest
  * rather than naming every chapter picked.
  */
-export function ChatScopeMenu({ chapters, pageCount, scope, onChange }: ChatScopeMenuProps) {
+export function ChatScopeMenu({
+  chapters,
+  chaptersError,
+  pageCount,
+  scope,
+  onChange,
+}: ChatScopeMenuProps) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -97,7 +105,14 @@ export function ChatScopeMenu({ chapters, pageCount, scope, onChange }: ChatScop
             </span>
           </button>
 
-          {chapters.length === 0 ? (
+          {chaptersError ? (
+            // Told apart from a book that has no table of contents on purpose:
+            // "this book has none" is a claim about the book, and saying it
+            // because a request failed is telling the reader something untrue.
+            <p role="alert" className="px-2 py-1.5 text-xs text-red-600">
+              範囲の一覧を読み込めませんでした: {chaptersError.message}
+            </p>
+          ) : chapters.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-gray-500">この本には目次がありません</p>
           ) : (
             chapters.map((chapter) => (
