@@ -5,7 +5,7 @@ import { okAsync, errAsync } from "neverthrow";
 import type { ReactNode } from "react";
 import { useReadingStateSync, type SaveReadingState } from "./useReadingStateSync";
 import { currentPageAtom, outlineOpenAtom } from "../atoms/pdfAtom";
-import { activeSelectionAtom, chatPanelOpenAtom } from "../atoms/chatAtom";
+import { activeSelectionAtom, bookChatOpenAtom, chatPanelOpenAtom } from "../atoms/chatAtom";
 import { ApiError } from "../lib/fetcher";
 import { setViewportWidth, PHONE_WIDTH } from "../../test/viewport";
 import type { SaveReadingStateRequest } from "../../shared/schemas/book";
@@ -85,7 +85,13 @@ describe("useReadingStateSync", () => {
     expect(saves).toStrictEqual([
       {
         pdfId: PDF_ID,
-        place: { page: 17, selectionId: null, outlineOpen: false, chatPanelOpen: false },
+        place: {
+          page: 17,
+          selectionId: null,
+          bookChat: false,
+          outlineOpen: false,
+          chatPanelOpen: false,
+        },
         keepalive: false,
       },
     ]);
@@ -105,7 +111,62 @@ describe("useReadingStateSync", () => {
     expect(saves).toStrictEqual([
       {
         pdfId: PDF_ID,
-        place: { page: 30, selectionId: "a2", outlineOpen: false, chatPanelOpen: false },
+        place: {
+          page: 30,
+          selectionId: "a2",
+          bookChat: false,
+          outlineOpen: false,
+          chatPanelOpen: false,
+        },
+        keepalive: false,
+      },
+    ]);
+  });
+
+  it("saves that the conversation left open was the book's own", async () => {
+    const { store, saves } = syncHarness();
+
+    act(() => {
+      store.set(currentPageAtom, 12);
+      store.set(bookChatOpenAtom, true);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(DEBOUNCE);
+    });
+
+    expect(saves).toStrictEqual([
+      {
+        pdfId: PDF_ID,
+        place: {
+          page: 12,
+          selectionId: null,
+          bookChat: true,
+          outlineOpen: false,
+          chatPanelOpen: false,
+        },
+        keepalive: false,
+      },
+    ]);
+  });
+
+  it("takes the book's own conversation with it where a narrow screen leaves the panels", async () => {
+    // Which conversation was open is part of the place rather than of the
+    // panels: a phone has a conversation open on the book too.
+    setViewportWidth(PHONE_WIDTH);
+    const { store, saves } = syncHarness();
+
+    act(() => {
+      store.set(currentPageAtom, 12);
+      store.set(bookChatOpenAtom, true);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(DEBOUNCE);
+    });
+
+    expect(saves).toStrictEqual([
+      {
+        pdfId: PDF_ID,
+        place: { page: 12, selectionId: null, bookChat: true },
         keepalive: false,
       },
     ]);
@@ -124,7 +185,13 @@ describe("useReadingStateSync", () => {
     expect(saves).toStrictEqual([
       {
         pdfId: PDF_ID,
-        place: { page: 12, selectionId: null, outlineOpen: false, chatPanelOpen: false },
+        place: {
+          page: 12,
+          selectionId: null,
+          bookChat: false,
+          outlineOpen: false,
+          chatPanelOpen: false,
+        },
         keepalive: false,
       },
     ]);
@@ -143,7 +210,13 @@ describe("useReadingStateSync", () => {
     expect(saves).toStrictEqual([
       {
         pdfId: PDF_ID,
-        place: { page: 17, selectionId: null, outlineOpen: false, chatPanelOpen: false },
+        place: {
+          page: 17,
+          selectionId: null,
+          bookChat: false,
+          outlineOpen: false,
+          chatPanelOpen: false,
+        },
         keepalive: false,
       },
     ]);
@@ -168,7 +241,13 @@ describe("useReadingStateSync", () => {
     expect(saves).toStrictEqual([
       {
         pdfId: PDF_ID,
-        place: { page: 4, selectionId: null, outlineOpen: false, chatPanelOpen: false },
+        place: {
+          page: 4,
+          selectionId: null,
+          bookChat: false,
+          outlineOpen: false,
+          chatPanelOpen: false,
+        },
         keepalive: false,
       },
     ]);
@@ -184,7 +263,7 @@ describe("useReadingStateSync", () => {
     await turnTo(17);
 
     expect(saves).toStrictEqual([
-      { pdfId: PDF_ID, place: { page: 17, selectionId: null }, keepalive: false },
+      { pdfId: PDF_ID, place: { page: 17, selectionId: null, bookChat: false }, keepalive: false },
     ]);
   });
 
@@ -201,7 +280,13 @@ describe("useReadingStateSync", () => {
     expect(saves).toStrictEqual([
       {
         pdfId: PDF_ID,
-        place: { page: 1, selectionId: null, outlineOpen: true, chatPanelOpen: false },
+        place: {
+          page: 1,
+          selectionId: null,
+          bookChat: false,
+          outlineOpen: true,
+          chatPanelOpen: false,
+        },
         keepalive: false,
       },
     ]);
@@ -218,7 +303,13 @@ describe("useReadingStateSync", () => {
     expect(saves).toStrictEqual([
       {
         pdfId: PDF_ID,
-        place: { page: 1, selectionId: null, outlineOpen: false, chatPanelOpen: true },
+        place: {
+          page: 1,
+          selectionId: null,
+          bookChat: false,
+          outlineOpen: false,
+          chatPanelOpen: true,
+        },
         keepalive: false,
       },
     ]);
@@ -245,7 +336,13 @@ describe("useReadingStateSync", () => {
     expect(saves).toStrictEqual([
       {
         pdfId: PDF_ID,
-        place: { page: 17, selectionId: null, outlineOpen: false, chatPanelOpen: false },
+        place: {
+          page: 17,
+          selectionId: null,
+          bookChat: false,
+          outlineOpen: false,
+          chatPanelOpen: false,
+        },
         keepalive: true,
       },
     ]);
@@ -261,7 +358,13 @@ describe("useReadingStateSync", () => {
     expect(saves).toStrictEqual([
       {
         pdfId: PDF_ID,
-        place: { page: 17, selectionId: null, outlineOpen: false, chatPanelOpen: false },
+        place: {
+          page: 17,
+          selectionId: null,
+          bookChat: false,
+          outlineOpen: false,
+          chatPanelOpen: false,
+        },
         keepalive: false,
       },
     ]);
@@ -278,7 +381,13 @@ describe("useReadingStateSync", () => {
     expect(saves).toStrictEqual([
       {
         pdfId: PDF_ID,
-        place: { page: 17, selectionId: null, outlineOpen: false, chatPanelOpen: false },
+        place: {
+          page: 17,
+          selectionId: null,
+          bookChat: false,
+          outlineOpen: false,
+          chatPanelOpen: false,
+        },
         keepalive: true,
       },
     ]);

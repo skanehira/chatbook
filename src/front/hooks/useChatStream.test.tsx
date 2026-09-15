@@ -66,6 +66,38 @@ describe("useChatStream", () => {
     expect(store.get(chatAbortControllerAtom)).toBeNull();
   });
 
+  it("asks the book itself when there is no passage under the question, over the pages picked", async () => {
+    const { fetchFn, calls } = streamingFetchStub();
+    const { view } = renderChatStream(fetchFn);
+
+    let sent!: ResultAsync<string, ApiError>;
+    await act(async () => {
+      sent = view.result.current.sendMessage("p1", null, QUESTION, false, {
+        scope: [{ startPage: 5, endPage: 8 }],
+      });
+    });
+    await act(async () => {
+      calls[0].emit(tokenEvent("まとめます"));
+      calls[0].emit(doneEvent("m1"));
+      calls[0].end();
+      await sent;
+    });
+
+    // A conversation with no highlight in it is the book's own, and the pages
+    // ride with the question — under the name the endpoint takes them by, so
+    // that the same thread can be asked about another chapter on the next turn.
+    expect(calls.map((call) => [call.url, call.body])).toStrictEqual([
+      [
+        "/api/pdf/p1/chats",
+        {
+          content: QUESTION,
+          useWebSearch: false,
+          scope: { ranges: [{ startPage: 5, endPage: 8 }] },
+        },
+      ],
+    ]);
+  });
+
   it("keeps a half-written answer out of the conversation when the chat is left", async () => {
     const { fetchFn, calls } = streamingFetchStub();
     const { store, view } = renderChatStream(fetchFn);

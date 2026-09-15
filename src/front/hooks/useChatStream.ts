@@ -11,12 +11,17 @@ import {
 } from "../atoms/chatAtom";
 import { createSseParser } from "../lib/sseParser";
 import { ApiError, CLIENT_ERROR_CODES, networkFailure, readRefusal } from "../lib/fetcher";
-import type { ChatMessage } from "../../shared/schemas/chat";
+import type { ChatMessage, PageRange } from "../../shared/schemas/chat";
 import type { Citation } from "../../shared/schemas/citation";
 import type { ErrorCode } from "../../shared/schemas/error";
 import { chatSseEventSchema } from "../../shared/schemas/sse";
 
 interface ChatStreamOptions {
+  /**
+   * The pages a question about the book is aimed at; left out for the whole of
+   * it, and never sent for a question about a highlight.
+   */
+  scope?: PageRange[];
   onCitation?: (citation: Citation) => void;
   onDone?: (messageId: string) => void;
 }
@@ -62,12 +67,19 @@ export function useChatStream(fetchFn: typeof fetch = fetch, now: () => Date = s
   const sendMessage = useCallback(
     (
       pdfId: string,
-      selectionId: string,
+      /**
+       * The highlight the conversation hangs off, or null for the book's own
+       * conversation — the one asked about the work itself.
+       */
+      selectionId: string | null,
       content: string,
       useWebSearch: boolean,
       options: ChatStreamOptions = {},
     ): ResultAsync<string, ApiError> => {
-      const url = `/api/pdf/${pdfId}/selections/${selectionId}/chats`;
+      const url =
+        selectionId === null
+          ? `/api/pdf/${pdfId}/chats`
+          : `/api/pdf/${pdfId}/selections/${selectionId}/chats`;
 
       const run = async (): Promise<Result<string, ApiError>> => {
         // Only one answer streams at a time, so asking again never leaves an
@@ -95,7 +107,14 @@ export function useChatStream(fetchFn: typeof fetch = fetch, now: () => Date = s
           const response = await fetchFn(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content, useWebSearch }),
+            // The runs ride under a name of their own, and the whole field is
+            // dropped for a question that is not about the book — which is what
+            // `JSON.stringify` does with an undefined one.
+            body: JSON.stringify({
+              content,
+              useWebSearch,
+              scope: options.scope === undefined ? undefined : { ranges: options.scope },
+            }),
             signal: controller.signal,
           });
 

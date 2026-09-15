@@ -1,12 +1,23 @@
+import type { PageRange } from "../../shared/schemas/chat";
+import type { BookChapter } from "../../shared/schemas/book";
+
 /**
  * One part of the book a question can be aimed at: a chapter of the table of
  * contents, or the pages before the first one, which no heading covers.
+ *
+ * The shape is the server's — it works the pages out from the outline it
+ * stores, so that what the reader picks and what an excerpt is cut by cannot
+ * disagree. This is the name the panel knows it by.
  */
-export interface ScopeChapter {
-  /** The chapter's heading, or null for the pages ahead of the first chapter. */
-  title: string | null;
-  startPage: number;
-  endPage: number;
+export type ScopeChapter = BookChapter;
+
+/**
+ * The pages a question under this scope sends. Nothing picked is the whole
+ * book, which is a range like any other rather than a second way of saying it.
+ */
+export function scopeRanges(scope: ScopeChapter[], pageCount: number): PageRange[] {
+  if (scope.length === 0) return [{ startPage: 1, endPage: pageCount }];
+  return scope.map(({ startPage, endPage }) => ({ startPage, endPage }));
 }
 
 /** What the pages ahead of the first chapter are called, having no heading. */

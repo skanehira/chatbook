@@ -64,6 +64,15 @@ const AN_ANSWER: ChatMessage = {
   createdAt: "2026-08-03T10:00:00.000Z",
 };
 
+/** An answer already in the book's own conversation. */
+const BOOK_ANSWER: ChatMessage = {
+  id: "m2",
+  role: "assistant",
+  content: "この本は Workers の分離と状態の置き場所を扱っています。",
+  citations: null,
+  createdAt: "2026-08-04T10:00:00.000Z",
+};
+
 /** The book's own endpoint, as opposed to the binary or a chat under it. */
 const isBookRequest = (url: string) => /^\/api\/pdf\/[^/]+$/.test(url);
 
@@ -85,6 +94,8 @@ function readerFetchStub({
   refuseReadingStateSave = false,
   /** What a highlight's conversation holds when it is opened. */
   chatHistory = [],
+  /** What the book's own conversation holds when it is opened. */
+  bookChatHistory = [],
 }: {
   holdTheBook?: boolean;
   refuseChatHistoryFor?: string;
@@ -92,6 +103,7 @@ function readerFetchStub({
   refuseLocate?: boolean;
   refuseReadingStateSave?: boolean;
   chatHistory?: ChatMessage[];
+  bookChatHistory?: ChatMessage[];
 } = {}) {
   const urls: string[] = [];
   // Every caller here reaches the network through `fetcher`, which is only
@@ -121,11 +133,13 @@ function readerFetchStub({
       return Promise.resolve(new Response(JSON.stringify(locate), { status: 200 }));
     }
     if (url.endsWith("/chats")) {
-      // The book's own conversation is reached without a highlight in the path.
-      // It starts empty: nothing in these tests asks it a question.
+      // The book's own conversation is reached without a highlight in the path,
+      // and is named as such in the answer.
       if (!url.includes("/selections/")) {
         return Promise.resolve(
-          new Response(JSON.stringify({ selectionId: null, messages: [] }), { status: 200 }),
+          new Response(JSON.stringify({ selectionId: null, messages: bookChatHistory }), {
+            status: 200,
+          }),
         );
       }
       const selectionId = url.split("/selections/")[1].split("/")[0];
@@ -193,6 +207,7 @@ function renderReader(
     refuseReadingStateSave?: boolean;
     search?: string;
     chatHistory?: ChatMessage[];
+    bookChatHistory?: ChatMessage[];
   } = {},
 ) {
   const { urls, fetchFn } = readerFetchStub(options);
@@ -295,7 +310,11 @@ describe("AppPage", () => {
   });
 
   it("leaves the highlight's conversation behind when the reader asks about the book itself", async () => {
-    renderReader(BOOK_A.id, { [bookKey(BOOK_A.id)]: BOOK_A }, { chatHistory: [AN_ANSWER] });
+    renderReader(
+      BOOK_A.id,
+      { [bookKey(BOOK_A.id)]: BOOK_A },
+      { chatHistory: [AN_ANSWER], bookChatHistory: [BOOK_ANSWER] },
+    );
 
     await userEvent.click(screen.getByText(A_PASSAGE));
     expect(await screen.findByText(AN_ANSWER.content)).toBeInTheDocument();
@@ -303,8 +322,12 @@ describe("AppPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "一覧に戻る" }));
     await userEvent.click(screen.getByRole("button", { name: "本について質問する" }));
 
-    // The book's own conversation starts empty rather than opening under the
-    // answers to a passage the reader has just stepped away from.
+    // What the book itself had been asked, read back under the same panel: the
+    // two conversations are told apart by the id being null, and an answer the
+    // client refuses to read would leave the reader an error instead.
+    expect(await screen.findByText(BOOK_ANSWER.content)).toBeInTheDocument();
+    expect(screen.queryByText(/チャット履歴を読み込めませんでした/)).toBeNull();
+    // And not the answers to a passage the reader has just stepped away from.
     expect(screen.queryByText(AN_ANSWER.content)).toBeNull();
     expect(screen.getByRole("button", { name: "範囲: 本全体" })).toBeInTheDocument();
   });

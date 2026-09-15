@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vite-plus/test";
-import { chapterLabel, pageRangeLabel, scopeLabel, type ScopeChapter } from "./chatScope";
+import {
+  chapterLabel,
+  pageRangeLabel,
+  scopeLabel,
+  scopeRanges,
+  type ScopeChapter,
+} from "./chatScope";
 
 function chapter(title: string | null, startPage: number, endPage: number): ScopeChapter {
   return { title, startPage, endPage };
@@ -20,6 +26,19 @@ describe("scopeLabel", () => {
 
   it("counts the rest rather than listing every chapter picked", () => {
     expect(scopeLabel([V8, DURABLE_OBJECTS, R2])).toBe("第2章 V8 とアイソレート ほか2件");
+  });
+});
+
+describe("scopeRanges", () => {
+  it("sends the pages of the chapters picked", () => {
+    expect(scopeRanges([V8, R2], 60)).toStrictEqual([
+      { startPage: 12, endPage: 34 },
+      { startPage: 49, endPage: 60 },
+    ]);
+  });
+
+  it("sends the whole book while nothing is picked", () => {
+    expect(scopeRanges([], 209)).toStrictEqual([{ startPage: 1, endPage: 209 }]);
   });
 });
 

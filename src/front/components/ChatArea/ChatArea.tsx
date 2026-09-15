@@ -6,7 +6,6 @@ import {
   isStreamingAtom,
   activeSelectionAtom,
   chatErrorAtom,
-  chatAbortControllerAtom,
   abortChatStreamAtom,
   selectionDeletedAtom,
   bookChatOpenAtom,
@@ -14,19 +13,18 @@ import {
   chatFaceAtom,
   type ActiveSelection,
 } from "../../atoms/chatAtom";
-import { outlineChaptersAtom } from "../../atoms/pdfAtom";
 import type { BookDetail } from "../../../shared/schemas/book";
-import type { ChatMessage } from "../../../shared/schemas/chat";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatInput } from "./ChatInput";
 import { ChatScopeMenu } from "./ChatScopeMenu";
 import { HighlightListPanel } from "./HighlightListPanel";
 import { useWebSearchAtom } from "../../atoms/settingsAtom";
 import { useChatStream } from "../../hooks/useChatStream";
+import { useChapters } from "../../hooks/useChapters";
 import { useHighlights, type DeleteHighlight } from "../../hooks/useHighlights";
 import { useHighlightSearch, type SearchSelections } from "../../hooks/useHighlightSearch";
 import { formatQuotedQuestion } from "../../lib/quotedQuestion";
-import { mockBookReply } from "../../lib/bookChatMock";
+import { scopeRanges } from "../../lib/chatScope";
 import type { ReadChatQuote } from "../../lib/chatQuoteSelection";
 
 interface ChatAreaProps {
@@ -66,7 +64,7 @@ export function ChatArea({
   const [activeSelection, setActiveSelection] = useAtom(activeSelectionAtom);
   const setBookChatOpen = useSetAtom(bookChatOpenAtom);
   const [scope, setScope] = useAtom(chatScopeAtom);
-  const chapters = useAtomValue(outlineChaptersAtom);
+  const { data: chapterList } = useChapters(book?.id);
   const face = useAtomValue(chatFaceAtom);
   const { highlights, removeHighlight } = useHighlights(book?.id, undefined, deleteHighlight);
   const { query, setQuery, submit, matchedIds, searchError } = useHighlightSearch(
@@ -75,13 +73,9 @@ export function ChatArea({
   );
   const selectionDeleted = useSetAtom(selectionDeletedAtom);
   const messages = useAtomValue(chatMessagesAtom);
-  const setMessages = useSetAtom(chatMessagesAtom);
   const streamingContent = useAtomValue(streamingContentAtom);
-  const setStreamingContent = useSetAtom(streamingContentAtom);
   const isStreaming = useAtomValue(isStreamingAtom);
-  const setIsStreaming = useSetAtom(isStreamingAtom);
   const chatError = useAtomValue(chatErrorAtom);
-  const setAbortController = useSetAtom(chatAbortControllerAtom);
   const useWebSearch = useAtomValue(useWebSearchAtom);
   const abortChatStream = useSetAtom(abortChatStreamAtom);
 
@@ -106,45 +100,6 @@ export function ChatArea({
     setQuote(null);
   }
 
-  /**
-   * MOCK: the book's own conversation has no endpoint yet, so the answer is
-   * canned and nothing is stored — the thread is gone on reload. It is driven
-   * through the same atoms the real stream writes, and stopped by the same
-   * `abortChatStreamAtom`, so what is being judged here is the real screen.
-   * Deleted with `bookChatMock`, in favour of
-   * `sendMessage(book.id, null, question, useWebSearch, scope)`.
-   */
-  const askTheBook = (question: string, pageCount: number) => {
-    abortChatStream();
-    const controller = new AbortController();
-    setAbortController(controller);
-    setIsStreaming(true);
-    setStreamingContent("");
-
-    const stamped = (role: ChatMessage["role"], content: string): ChatMessage => ({
-      id: `temp-${role}-${Date.now()}`,
-      role,
-      content,
-      citations: null,
-      createdAt: new Date().toISOString(),
-    });
-    setMessages((previous) => [...previous, stamped("user", question)]);
-
-    mockBookReply({
-      question,
-      scope,
-      pageCount,
-      signal: controller.signal,
-      onToken: (token) => setStreamingContent((previous) => previous + token),
-      onDone: (answer) => {
-        setMessages((previous) => [...previous, stamped("assistant", answer)]);
-        setStreamingContent("");
-        setIsStreaming(false);
-        setAbortController(null);
-      },
-    });
-  };
-
   const handleSend = async (content: string) => {
     if (!book || face === "list") return;
     // The quote rides inside the message: the thread is stored as content and
@@ -156,7 +111,12 @@ export function ChatArea({
       await sendMessage(book.id, selection.id, question, useWebSearch);
       return;
     }
-    askTheBook(question, book.pageCount);
+    // The book's own conversation: no highlight under the question, and the
+    // pages it is aimed at carried with it. A thread stays open across
+    // turns, so the next question can be about another chapter.
+    await sendMessage(book.id, null, question, useWebSearch, {
+      scope: scopeRanges(scope, book.pageCount),
+    });
   };
 
   const backToList = () => {
@@ -216,7 +176,7 @@ export function ChatArea({
         </button>
         {face === "book" && (
           <ChatScopeMenu
-            chapters={chapters}
+            chapters={chapterList?.chapters ?? []}
             pageCount={book.pageCount}
             scope={scope}
             onChange={setScope}

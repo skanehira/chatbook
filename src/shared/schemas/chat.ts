@@ -20,8 +20,13 @@ export const chatMessageSchema = z.object({
 
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
 
+/**
+ * A conversation as it is read back: the messages, and which conversation they
+ * are. `null` names the book's own — the one with no highlight under it — which
+ * is the only thing telling the two apart on the wire.
+ */
 export const chatHistorySchema = z.object({
-  selectionId: z.string(),
+  selectionId: z.string().nullable(),
   messages: z.array(chatMessageSchema),
 });
 

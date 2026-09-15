@@ -89,6 +89,23 @@ export const bookOutlineSchema = z.array(outlineChapterSchema).min(1).max(MAX_OU
 
 export type BookOutline = z.infer<typeof bookOutlineSchema>;
 
+/**
+ * One part of the book a question can be aimed at, with the pages it covers.
+ *
+ * The pages ahead of the first chapter come back with no title of their own —
+ * the spans tile the book between them, so nothing is left that a reader
+ * cannot ask about.
+ */
+export const bookChapterSchema = z.object({
+  title: z.string().nullable(),
+  startPage: z.number().int().positive(),
+  endPage: z.number().int().positive(),
+});
+
+export type BookChapter = z.infer<typeof bookChapterSchema>;
+
+export const chapterListSchema = z.object({ chapters: z.array(bookChapterSchema) });
+
 /** What opening a PDF returns: the metadata the reader needs to render it. */
 export const pdfMetadataSchema = z.object({
   id: z.string(),

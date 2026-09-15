@@ -5,7 +5,12 @@ import { Provider, createStore, useSetAtom } from "jotai";
 import type { ReactNode } from "react";
 import { useReadingLocation, type LocatePassage } from "./useReadingLocation";
 import { currentPageAtom, outlineOpenAtom } from "../atoms/pdfAtom";
-import { activeSelectionAtom, chatPanelOpenAtom, type ActiveSelection } from "../atoms/chatAtom";
+import {
+  activeSelectionAtom,
+  bookChatOpenAtom,
+  chatPanelOpenAtom,
+  type ActiveSelection,
+} from "../atoms/chatAtom";
 import { SwrTestCache } from "../../test/swrTestCache";
 import { setViewportWidth, PHONE_WIDTH } from "../../test/viewport";
 import type { BookDetail, ReadingState } from "../../shared/schemas/book";
@@ -62,6 +67,7 @@ function useHarness(
   visited: string[],
   book: BookDetail | undefined,
   openChat: (selection: ActiveSelection) => void,
+  openBookChat: () => void,
 ) {
   const { passageMiss, locationReady } = useReadingLocation(
     PDF_ID,
@@ -69,6 +75,7 @@ function useHarness(
     linkedPassage,
     book,
     openChat,
+    openBookChat,
   );
 
   const { search } = useLocation();
@@ -108,14 +115,18 @@ function renderAt(
   // Stands in for the reader's own opener: the chat it puts on screen is the
   // active selection, which is also what keeps the id in the URL afterwards.
   const openChat = vi.fn((selection: ActiveSelection) => store.set(activeSelectionAtom, selection));
+  // The other opener: the book's own conversation has no highlight to name, so
+  // what it puts on screen is the flag the panel reads.
+  const openBookChat = vi.fn(() => store.set(bookChatOpenAtom, true));
 
   return {
     store,
     visited,
     openChat,
+    openBookChat,
     view: renderHook(
       ({ book }: { book: BookDetail | undefined }) =>
-        useHarness(locatePassage, linkedPassage, visited, book, openChat),
+        useHarness(locatePassage, linkedPassage, visited, book, openChat, openBookChat),
       { wrapper, initialProps: { book } },
     ),
   };
@@ -613,6 +624,52 @@ describe("useReadingLocation resuming where another device left off", () => {
     );
 
     expect(view.result.current.locationReady).toBe(true);
+  });
+});
+
+describe("useReadingLocation restoring the book's own conversation", () => {
+  /** A book left with the conversation about the book itself open on it. */
+  const BOOK_CHAT_LEFT_OPEN = {
+    page: 17,
+    selectionId: null,
+    bookChat: true,
+    outlineOpen: null,
+    chatPanelOpen: null,
+  } as const;
+
+  it("opens the conversation the book was left in when the URL names no other", async () => {
+    const { store, openBookChat, view } = renderAt(`/books/${PDF_ID}`);
+
+    await act(async () => view.rerender({ book: bookLeftAt(BOOK_CHAT_LEFT_OPEN) }));
+
+    expect(openBookChat).toHaveBeenCalledTimes(1);
+    expect(store.get(bookChatOpenAtom)).toBe(true);
+  });
+
+  it("leaves it for the highlight a URL names instead", async () => {
+    // The URL can name a highlight and nothing else, so where it names one that
+    // is the conversation the reader followed a link to.
+    const { openChat, openBookChat, view } = renderAt(`/books/${PDF_ID}?page=5&selection=a1`);
+
+    await act(async () => view.rerender({ book: bookLeftAt(BOOK_CHAT_LEFT_OPEN) }));
+
+    expect(openChat).toHaveBeenCalledTimes(1);
+    expect(openBookChat).not.toHaveBeenCalled();
+  });
+
+  it("opens the list when no conversation was left open at all", async () => {
+    const { store, openChat, openBookChat, view } = renderAt(`/books/${PDF_ID}`);
+
+    await act(async () =>
+      view.rerender({
+        book: bookLeftAt({ ...BOOK_CHAT_LEFT_OPEN, bookChat: null }),
+      }),
+    );
+
+    expect(view.result.current.locationReady).toBe(true);
+    expect(openBookChat).not.toHaveBeenCalled();
+    expect(openChat).not.toHaveBeenCalled();
+    expect(store.get(bookChatOpenAtom)).toBe(false);
   });
 });
 

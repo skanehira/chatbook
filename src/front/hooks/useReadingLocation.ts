@@ -17,6 +17,9 @@ export type PassageMiss = PageMiss | "lookup-failed";
 /** Puts the chat about a highlight on screen, with whatever was asked before. */
 export type OpenChat = (selection: ActiveSelection) => void;
 
+/** Puts the book's own conversation on screen, with whatever was asked before. */
+export type OpenBookChat = () => void;
+
 const PAGE_PARAM = "page";
 const SELECTION_PARAM = "selection";
 
@@ -105,6 +108,7 @@ export function useReadingLocation(
   linkedPassage: string | null,
   book: BookDetail | undefined,
   openChat: OpenChat,
+  openBookChat: OpenBookChat,
 ): { passageMiss: PassageMiss | null; locationReady: boolean } {
   const [searchParams, setSearchParams] = useSearchParams();
   const [currentPage, setCurrentPage] = useAtom(currentPageAtom);
@@ -131,6 +135,11 @@ export function useReadingLocation(
   // Whether the URL named the place to open at, written by the first effect
   // below on every book and read by the two after it.
   const urlNamesPlace = useRef(false);
+
+  // Whether the URL named a highlight's chat, which is the one conversation it
+  // can name. Read by the restore below: the book's own is taken from the book
+  // only where the reader did not follow a link to a passage's.
+  const urlNamesAChat = useRef(false);
 
   // The panels as this book was opened, against which "did the reader move one"
   // is judged. The header's toggles do not wait for the book, so this is the
@@ -168,6 +177,7 @@ export function useReadingLocation(
     const params = searchParamsRef.current;
     const namesPlace = urlNamesAPlace(params, linkedPassage);
     urlNamesPlace.current = namesPlace;
+    urlNamesAChat.current = params.get(SELECTION_PARAM) !== null;
     urlIsAuthoritative.current = true;
     panelsWhenOpened.current = panelsNow.current;
     setPendingRestore(true);
@@ -251,6 +261,15 @@ export function useReadingLocation(
       }
     }
 
+    // The book's own conversation, taken out of the book however it was opened.
+    // The URL cannot name it — `?selection=` is the only conversation a link
+    // carries — so where the reader followed a link to a highlight, that is the
+    // one they asked for and this stays out of its way. Nothing here waits on
+    // the reader having moved first, unlike the panels: the entry to this
+    // conversation is inside the panel, so there is no way to open it before
+    // the book arrives.
+    if (place?.bookChat === true && !urlNamesAChat.current) openBookChat();
+
     // The panels are settled here whatever the book says, since they start away
     // and this is what puts them up: what the book was left with, or open where
     // it says nothing — `null`, and a book nobody has read at all, both mean the
@@ -268,7 +287,15 @@ export function useReadingLocation(
     // rather than skipping one.
     if (!urlNamesPlace.current) urlIsAuthoritative.current = false;
     setPendingRestore(false);
-  }, [pendingRestore, book, openChat, setCurrentPage, setOutlineOpen, setChatPanelOpen]);
+  }, [
+    pendingRestore,
+    book,
+    openChat,
+    openBookChat,
+    setCurrentPage,
+    setOutlineOpen,
+    setChatPanelOpen,
+  ]);
 
   // The chat named by the URL, reopened as soon as the book can say which
   // highlight that is

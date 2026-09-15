@@ -99,6 +99,44 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
   );
 
   /**
+   * Clear the panel for a conversation about to be opened.
+   *
+   * An answer still streaming belongs to the conversation being left behind, a
+   * thread left on screen shows under the new one until its own history
+   * arrives, and whatever failed in it is not this one's failure. On one column
+   * the conversation waits out of the way until it is asked for, and opening
+   * one — off the page, off the list, out of a link, or from the list's own way
+   * into the book — is the asking; a sheet already drawn up is left where it is.
+   */
+  const openConversation = useCallback(() => {
+    abortChatStream();
+    setChatMessages([]);
+    setChatError(null);
+    // The passage a citation of the previous chat pointed at is not this one's,
+    // and both would otherwise be marked on the same page
+    setCitedPassage(null);
+    if (isNarrow) setChatSheet((sheet) => (sheet === "closed" ? "half" : sheet));
+  }, [abortChatStream, isNarrow, setChatError, setChatMessages, setChatSheet, setCitedPassage]);
+
+  /**
+   * Read a conversation in, whichever of the two it is.
+   *
+   * An empty conversation and one that could not be read used to look the same,
+   * so a failure here read as "you never asked anything about this".
+   */
+  const loadConversation = useCallback(
+    async (url: string) => {
+      const history = await resultFetcher(url, chatHistorySchema);
+
+      history.match(
+        (data) => setChatMessages(data.messages),
+        (failure) => setChatError(`チャット履歴を読み込めませんでした: ${failure.message}`),
+      );
+    },
+    [setChatError, setChatMessages],
+  );
+
+  /**
    * Put a highlight's conversation on screen, with whatever was asked before.
    *
    * Which page the reader is on is deliberately not part of this: a chat picked
@@ -107,79 +145,30 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
    */
   const openChat = useCallback(
     async (selection: ActiveSelection) => {
-      // An answer still streaming belongs to the chat being left behind
-      abortChatStream();
+      openConversation();
       // One panel, two kinds of conversation: the passage's wins over the
       // book's, and opening one is leaving the other behind.
       setBookChatOpen(false);
       setActiveSelection(selection);
-      // Otherwise the conversation left behind shows under the new passage
-      // until its own history arrives
-      setChatMessages([]);
-      // Whatever failed in the chat being left is not about this one
-      setChatError(null);
-      // The passage a citation of the previous chat pointed at is not this
-      // highlight's, and both would otherwise be marked on the same page
-      setCitedPassage(null);
-      // On one column the conversation waits out of the way until it is asked
-      // for, and opening a highlight — off the page, off the list, or out of a
-      // link — is the asking. A sheet already drawn up is left where it is.
-      if (isNarrow) setChatSheet((sheet) => (sheet === "closed" ? "half" : sheet));
       if (!pdfId) return;
 
-      const history = await resultFetcher(
-        `/api/pdf/${pdfId}/selections/${selection.id}/chats`,
-        chatHistorySchema,
-      );
-
-      // An empty conversation and one that could not be read used to look the
-      // same, so a failure here read as "you never asked anything about this".
-      history.match(
-        (data) => setChatMessages(data.messages),
-        (failure) => setChatError(`チャット履歴を読み込めませんでした: ${failure.message}`),
-      );
+      await loadConversation(`/api/pdf/${pdfId}/selections/${selection.id}/chats`);
     },
-    [
-      abortChatStream,
-      isNarrow,
-      pdfId,
-      setActiveSelection,
-      setBookChatOpen,
-      setChatError,
-      setChatMessages,
-      setChatSheet,
-      setCitedPassage,
-    ],
+    [loadConversation, openConversation, pdfId, setActiveSelection, setBookChatOpen],
   );
 
   /**
    * Put the book's own conversation on screen: the same panel, showing what the
    * reader asks about the work rather than about a passage of it.
-   *
-   * MOCK: unlike `openChat` this reads no history — there is nothing stored to
-   * read until the server side exists, and the thread lives in the atoms for as
-   * long as the book is open. The rest — leaving the other conversation behind,
-   * clearing what belonged to it, drawing the sheet up on one column — is what
-   * the real one will do, so that what is being judged is the real screen.
    */
-  const openBookChat = useCallback(() => {
-    abortChatStream();
+  const openBookChat = useCallback(async () => {
+    openConversation();
     setActiveSelection(null);
     setBookChatOpen(true);
-    setChatMessages([]);
-    setChatError(null);
-    setCitedPassage(null);
-    if (isNarrow) setChatSheet((sheet) => (sheet === "closed" ? "half" : sheet));
-  }, [
-    abortChatStream,
-    isNarrow,
-    setActiveSelection,
-    setBookChatOpen,
-    setChatError,
-    setChatMessages,
-    setChatSheet,
-    setCitedPassage,
-  ]);
+    if (!pdfId) return;
+
+    await loadConversation(`/api/pdf/${pdfId}/chats`);
+  }, [loadConversation, openConversation, pdfId, setActiveSelection, setBookChatOpen]);
 
   const { passageMiss, locationReady } = useReadingLocation(
     pdfId,
@@ -187,6 +176,7 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
     linkedPassage,
     book,
     openChat,
+    openBookChat,
   );
   const { saveError } = useReadingStateSync(pdfId, locationReady);
 

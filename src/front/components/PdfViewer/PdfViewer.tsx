@@ -1,4 +1,4 @@
-// oxlint-disable-next-line no-restricted-imports -- 表示領域の ResizeObserver 購読、ピンチ (ctrlKey wheel) の非 passive な購読、ページ遷移時のスクロール位置リセット、document への selectionchange 購読、pdf.js が描いたテキストレイヤーからの引用箇所の計測、および [MOCK] 読んだ目次をチャットの範囲メニューへ渡す写しに必要
+// oxlint-disable-next-line no-restricted-imports -- 表示領域の ResizeObserver 購読、ピンチ (ctrlKey wheel) の非 passive な購読、ページ遷移時のスクロール位置リセット、document への selectionchange 購読、pdf.js が描いたテキストレイヤーからの引用箇所の計測に必要
 import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { useAtomValue, useAtom, useSetAtom } from "jotai";
 import {
@@ -7,7 +7,6 @@ import {
   UNDRAWN_PAGE,
   outlineOpenAtom,
   citedPassageAtom,
-  outlineChaptersAtom,
 } from "../../atoms/pdfAtom";
 import type { ActiveSelection } from "../../atoms/chatAtom";
 import type { SelectionRect } from "../../../shared/schemas/selection";
@@ -23,8 +22,6 @@ import { rangeWithinPage, selectionOnPage, type PageSelection } from "../../lib/
 import { citedPassageOnPage } from "../../lib/citedPassage";
 import { usePdfDocument } from "../../hooks/usePdfDocument";
 import { usePdfOutline } from "../../hooks/usePdfOutline";
-import { toStoredOutline } from "../../lib/pdfOutline";
-import { spansFromOutline } from "../../lib/bookChatMock";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { useWebSearchAtom, zoomAtomFor } from "../../atoms/settingsAtom";
 import { nextZoom } from "../../lib/pageScale";
@@ -248,14 +245,6 @@ export function PdfViewer({
   );
 
   const pageCount = book?.pageCount ?? 1;
-
-  // MOCK: the chat panel's chapter picker reads its list from the store, and
-  // nothing serves the stored outline yet — so the copy the viewer already
-  // reads for the outline panel is reported up. Deleted with bookChatMock.
-  const setOutlineChapters = useSetAtom(outlineChaptersAtom);
-  useEffect(() => {
-    setOutlineChapters(spansFromOutline(toStoredOutline(outline ?? []), pageCount));
-  }, [outline, pageCount, setOutlineChapters]);
 
   /**
    * Two pages beside each other as soon as the pane has room for both at the

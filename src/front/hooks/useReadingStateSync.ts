@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "jotai";
 import type { ResultAsync } from "neverthrow";
 import { currentPageAtom, outlineOpenAtom } from "../atoms/pdfAtom";
-import { activeSelectionAtom, chatPanelOpenAtom } from "../atoms/chatAtom";
+import { activeSelectionAtom, bookChatOpenAtom, chatPanelOpenAtom } from "../atoms/chatAtom";
 import { resultFetcher, type ApiError } from "../lib/fetcher";
 import { useIsNarrow } from "./useIsNarrow";
 import { readingStateSavedSchema, type SaveReadingStateRequest } from "../../shared/schemas/book";
@@ -39,6 +39,7 @@ function samePlace(one: SaveReadingStateRequest, other: SaveReadingStateRequest)
   return (
     one.page === other.page &&
     one.selectionId === other.selectionId &&
+    one.bookChat === other.bookChat &&
     one.outlineOpen === other.outlineOpen &&
     one.chatPanelOpen === other.chatPanelOpen
   );
@@ -77,17 +78,21 @@ export function useReadingStateSync(
 ): { saveError: string | null } {
   const currentPage = useAtomValue(currentPageAtom);
   const selectionId = useAtomValue(activeSelectionAtom)?.id ?? null;
+  const bookChat = useAtomValue(bookChatOpenAtom);
   const outlineOpen = useAtomValue(outlineOpenAtom);
   const chatPanelOpen = useAtomValue(chatPanelOpenAtom);
   const isNarrow = useIsNarrow();
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // `bookChat` rides with the page and the selection on both layouts — it is
+  // which conversation was open, not how the panels sat — while the two panels
+  // are left out by a narrow screen, which has a drawer and a sheet instead.
   const place: SaveReadingStateRequest = useMemo(
     () =>
       isNarrow
-        ? { page: currentPage, selectionId }
-        : { page: currentPage, selectionId, outlineOpen, chatPanelOpen },
-    [currentPage, selectionId, outlineOpen, chatPanelOpen, isNarrow],
+        ? { page: currentPage, selectionId, bookChat }
+        : { page: currentPage, selectionId, bookChat, outlineOpen, chatPanelOpen },
+    [currentPage, selectionId, bookChat, outlineOpen, chatPanelOpen, isNarrow],
   );
 
   /** The place the server holds, as far as this reader knows. */
