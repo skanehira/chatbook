@@ -3,6 +3,7 @@ import { useSetAtom } from "jotai";
 import type { ResultAsync } from "neverthrow";
 import {
   activeSelectionAtom,
+  bookChatOpenAtom,
   chatMessagesAtom,
   chatPanelOpenAtom,
   chatSheetAtom,
@@ -51,6 +52,7 @@ export function useAskAboutSelection(
   saveSelection: SaveSelection = storeSelection,
 ) {
   const setActiveSelection = useSetAtom(activeSelectionAtom);
+  const setBookChatOpen = useSetAtom(bookChatOpenAtom);
   const setChatMessages = useSetAtom(chatMessagesAtom);
   const setChatSheet = useSetAtom(chatSheetAtom);
   const setChatPanelOpen = useSetAtom(chatPanelOpenAtom);
@@ -65,6 +67,9 @@ export function useAskAboutSelection(
       return saveSelection(pdfId, draft)
         .andTee((selection) => {
           addHighlight(selection);
+          // One panel, one conversation at a time: the book's own thread is
+          // left behind, as it is when a highlight is opened from the list.
+          setBookChatOpen(false);
           setActiveSelection({
             id: selection.id,
             selectedText: selection.selectedText,
@@ -97,6 +102,7 @@ export function useAskAboutSelection(
       saveSelection,
       sendMessage,
       setActiveSelection,
+      setBookChatOpen,
       setChatMessages,
       setChatPanelOpen,
       setChatSheet,

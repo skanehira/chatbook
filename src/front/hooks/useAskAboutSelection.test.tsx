@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { useAskAboutSelection, type SaveSelection } from "./useAskAboutSelection";
 import {
   activeSelectionAtom,
+  bookChatOpenAtom,
   chatMessagesAtom,
   chatPanelOpenAtom,
   chatSheetAtom,
@@ -134,6 +135,30 @@ describe("useAskAboutSelection", () => {
     });
 
     expect(store.get(chatPanelOpenAtom)).toBe(true);
+  });
+
+  it("leaves the book's own conversation behind for the passage's", async () => {
+    // Asking about a passage is the third way into a conversation, after the
+    // list and the URL, and the panel shows one at a time: the book's own
+    // thread left standing would be the face the reader came back to when they
+    // left this one, rather than the list they asked for.
+    const { fetchFn } = streamingFetchStub();
+    vi.stubGlobal("fetch", fetchFn);
+    const { store, view } = renderAsk(
+      () => okAsync(STORED),
+      (seed) => seed.set(bookChatOpenAtom, true),
+    );
+
+    await act(async () => {
+      await view.result.current.askAboutSelection(PDF_ID, DRAFT, QUESTION, false);
+    });
+
+    expect(store.get(activeSelectionAtom)).toStrictEqual({
+      id: STORED.id,
+      selectedText: STORED.selectedText,
+      pageNumber: STORED.pageNumber,
+    });
+    expect(store.get(bookChatOpenAtom)).toBe(false);
   });
 
   it("says the highlight could not be saved and asks nothing about it", async () => {
