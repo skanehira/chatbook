@@ -87,7 +87,7 @@ describe("ChatScopeMenu", () => {
     expect(screen.getByRole("checkbox", { name: /第3章 Durable Objects/ })).toBeChecked();
   });
 
-  it("hands the whole book back when the reader asks for it again", async () => {
+  it("hands the whole book back when the reader asks for it again, and shuts behind it", async () => {
     const picked: ScopeChapter[][] = [];
     render(menu(CHAPTERS, [V8], (scope) => picked.push(scope)));
 
@@ -95,6 +95,19 @@ describe("ChatScopeMenu", () => {
     await userEvent.click(wholeBookRow());
 
     expect(picked).toStrictEqual([[]]);
+    // The whole book is a finished choice, unlike a chapter, which is usually
+    // one of several: the menu closes rather than sitting over the thread.
+    expect(screen.queryByRole("checkbox", { name: /第2章 V8/ })).toBeNull();
+  });
+
+  it("names the chapter that comes first in the book, not the last one checked", async () => {
+    render(<PickedMenu />);
+
+    await userEvent.click(trigger());
+    await userEvent.click(screen.getByRole("checkbox", { name: /第3章 Durable Objects/ }));
+    await userEvent.click(screen.getByRole("checkbox", { name: /第2章 V8/ }));
+
+    expect(trigger()).toHaveTextContent("範囲: 第2章 V8 とアイソレート ほか1件");
   });
 
   it("takes a chapter back out when the reader unchecks it", async () => {
@@ -105,6 +118,18 @@ describe("ChatScopeMenu", () => {
     await userEvent.click(screen.getByRole("checkbox", { name: /第2章 V8/ }));
 
     expect(picked).toStrictEqual([[DURABLE_OBJECTS]]);
+  });
+
+  it("goes back to the whole book when the last chapter is unpicked", async () => {
+    // Picking nothing is not an empty question: the chip has to name something
+    // the reader can send.
+    render(<PickedMenu />);
+
+    await userEvent.click(trigger());
+    await userEvent.click(screen.getByRole("checkbox", { name: /第2章 V8/ }));
+    await userEvent.click(screen.getByRole("checkbox", { name: /第2章 V8/ }));
+
+    expect(trigger()).toHaveTextContent("範囲: 本全体");
   });
 
   it("says so, and offers only the whole book, when the book has no table of contents", async () => {
@@ -121,6 +146,8 @@ describe("ChatScopeMenu", () => {
     render(menu(CHAPTERS, []));
 
     await userEvent.click(trigger());
+    expect(screen.getByRole("checkbox", { name: /第2章 V8/ })).toBeInTheDocument();
+
     await userEvent.keyboard("{Escape}");
 
     expect(screen.queryByRole("checkbox", { name: /第2章 V8/ })).toBeNull();
@@ -130,6 +157,8 @@ describe("ChatScopeMenu", () => {
     render(menu(CHAPTERS, []));
 
     await userEvent.click(trigger());
+    expect(screen.getByRole("checkbox", { name: /第2章 V8/ })).toBeInTheDocument();
+
     await userEvent.click(document.body);
 
     expect(screen.queryByRole("checkbox", { name: /第2章 V8/ })).toBeNull();

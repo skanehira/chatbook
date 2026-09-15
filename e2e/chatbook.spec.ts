@@ -1529,6 +1529,10 @@ test("asks the book itself, aiming the question at chapters of its table of cont
   await expect(chatPanel.getByText("第2章 チャットとの連携")).toBeVisible();
   await expect(chatPanel.getByText("9〜12ページ")).toBeVisible();
   await expect(chatPanel.getByText("冒頭")).toBeVisible();
+  // The chapters are the ones the book's outline tops out at: the spans have to
+  // tile the whole book, and a sub-heading of its own would cut its chapter
+  // short at the pages the reader did not mean to leave out.
+  await expect(chatPanel.getByText("1.1 選択範囲の測定")).toHaveCount(0);
 
   await chatPanel.getByRole("checkbox", { name: /第2章 チャットとの連携/ }).click();
   await expect(

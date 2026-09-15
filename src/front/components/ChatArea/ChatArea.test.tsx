@@ -251,6 +251,34 @@ describe("ChatArea", () => {
     expect(screen.queryByText("チャットを開始するには")).toBeNull();
   });
 
+  it("keeps the scope out of a highlight's conversation, which has a passage to go by instead", () => {
+    renderChat();
+
+    expect(screen.getByText(SELECTED_TEXT)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^範囲:/ })).toBeNull();
+  });
+
+  it("drops a quote taken in the book's conversation when the reader leaves it for the list", async () => {
+    // A quote is a passage of the thread it was taken from; the list is not
+    // that thread, so coming back from it starts the question over rather than
+    // attaching it to a conversation the reader has stepped out of.
+    const { store, quote } = renderChat({
+      activeSelection: null,
+      bookChatOpen: true,
+      messages: [ANSWER_MESSAGE],
+    });
+    await quote(ANSWER);
+    expect(screen.getByRole("button", { name: "引用を取り消す" })).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "一覧に戻る" }));
+    act(() => {
+      store.set(bookChatOpenAtom, true);
+    });
+
+    expect(screen.getByPlaceholderText("質問を入力...")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "引用を取り消す" })).toBeNull();
+  });
+
   it("narrows the list to what the server says holds the query, chats included", async () => {
     const asked: string[] = [];
     renderChat({

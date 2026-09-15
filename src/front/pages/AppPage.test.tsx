@@ -7,6 +7,7 @@ import { AppPage } from "./AppPage";
 import { bookKey } from "../hooks/useBook";
 import { SwrTestCache } from "../../test/swrTestCache";
 import type { BookDetail, LocatedPage } from "../../shared/schemas/book";
+import type { ChatMessage } from "../../shared/schemas/chat";
 import type { SelectionHighlight } from "../../shared/schemas/selection";
 import { PHONE_WIDTH, setViewportWidth } from "../../test/viewport";
 
@@ -54,6 +55,15 @@ const BOOK_B: BookDetail = {
   readingState: null,
 };
 
+/** An answer already in a highlight's conversation, for the reader to leave behind. */
+const AN_ANSWER: ChatMessage = {
+  id: "m1",
+  role: "assistant",
+  content: "エッジではメモリを共有できないため、状態は Durable Objects に置きます。",
+  citations: null,
+  createdAt: "2026-08-03T10:00:00.000Z",
+};
+
 /** The book's own endpoint, as opposed to the binary or a chat under it. */
 const isBookRequest = (url: string) => /^\/api\/pdf\/[^/]+$/.test(url);
 
@@ -73,12 +83,15 @@ function readerFetchStub({
   locate = { found: false, miss: "not-in-book" } as const,
   refuseLocate = false,
   refuseReadingStateSave = false,
+  /** What a highlight's conversation holds when it is opened. */
+  chatHistory = [],
 }: {
   holdTheBook?: boolean;
   refuseChatHistoryFor?: string;
   locate?: LocatedPage;
   refuseLocate?: boolean;
   refuseReadingStateSave?: boolean;
+  chatHistory?: ChatMessage[];
 } = {}) {
   const urls: string[] = [];
   // Every caller here reaches the network through `fetcher`, which is only
@@ -108,13 +121,20 @@ function readerFetchStub({
       return Promise.resolve(new Response(JSON.stringify(locate), { status: 200 }));
     }
     if (url.endsWith("/chats")) {
+      // The book's own conversation is reached without a highlight in the path.
+      // It starts empty: nothing in these tests asks it a question.
+      if (!url.includes("/selections/")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ selectionId: null, messages: [] }), { status: 200 }),
+        );
+      }
       const selectionId = url.split("/selections/")[1].split("/")[0];
       const refused = selectionId === refuseChatHistoryFor;
       // The whole envelope, not just `messages`: the reader checks it against
       // chatHistorySchema and reports anything else as an unreadable response.
       const body = refused
         ? { error: { code: "SELECTION_NOT_FOUND", message: "Selection not found" } }
-        : { selectionId, messages: [] };
+        : { selectionId, messages: chatHistory };
       return Promise.resolve(new Response(JSON.stringify(body), { status: refused ? 404 : 200 }));
     }
     if (holdTheBook && isBookRequest(url)) {
@@ -172,6 +192,7 @@ function renderReader(
     refuseLocate?: boolean;
     refuseReadingStateSave?: boolean;
     search?: string;
+    chatHistory?: ChatMessage[];
   } = {},
 ) {
   const { urls, fetchFn } = readerFetchStub(options);
@@ -271,6 +292,21 @@ describe("AppPage", () => {
     expect(
       screen.queryByText("チャット履歴を読み込めませんでした: Selection not found"),
     ).toBeNull();
+  });
+
+  it("leaves the highlight's conversation behind when the reader asks about the book itself", async () => {
+    renderReader(BOOK_A.id, { [bookKey(BOOK_A.id)]: BOOK_A }, { chatHistory: [AN_ANSWER] });
+
+    await userEvent.click(screen.getByText(A_PASSAGE));
+    expect(await screen.findByText(AN_ANSWER.content)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "一覧に戻る" }));
+    await userEvent.click(screen.getByRole("button", { name: "本について質問する" }));
+
+    // The book's own conversation starts empty rather than opening under the
+    // answers to a passage the reader has just stepped away from.
+    expect(screen.queryByText(AN_ANSWER.content)).toBeNull();
+    expect(screen.getByRole("button", { name: "範囲: 本全体" })).toBeInTheDocument();
   });
 
   it("says a linked passage is not in the book rather than only that it was not found", async () => {
@@ -501,6 +537,20 @@ describe("AppPage on a screen too narrow for two panes", () => {
     await userEvent.click(screen.getByRole("button", { name: "次のページ" }));
 
     expect(screen.getByText("URL: page=2")).toBeInTheDocument();
+  });
+
+  it("asks about the book itself without leaving the sheet it was opened from", async () => {
+    setViewportWidth(PHONE_WIDTH);
+    renderReader(BOOK_A.id, { [bookKey(BOOK_A.id)]: BOOK_A });
+
+    await userEvent.click(await screen.findByRole("button", { name: "チャット" }));
+    await userEvent.click(await screen.findByRole("button", { name: "本について質問する" }));
+
+    // The same sheet, showing the book's own conversation: the entry is inside
+    // it, so nothing here is a second thing drawn over the page.
+    const sheet = screen.getByRole("region", { name: "チャット" });
+    expect(within(sheet).getByRole("button", { name: "範囲: 本全体" })).toBeInTheDocument();
+    expect(within(sheet).getByPlaceholderText("質問を入力...")).toBeInTheDocument();
   });
 
   it("offers no maximize toggle, the sheet being what is drawn up instead", async () => {
