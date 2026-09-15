@@ -200,6 +200,15 @@ pdf.js は workerd 上で動かない（native canvas を要求して落ちる�
 | D1 (`DB`)         | `pdfs` / `selections` / `chat_messages` のメタデータ          |
 | R2 (`PDF_BUCKET`) | PDF 本体 `pdfs/<sha256>.pdf`、表紙 `thumbnails/<sha256>.webp` |
 
+**チャットは本に属し、ハイライトに（任意で）ぶら下がる。** `chat_messages` は `pdf_id` を
+必ず持ち、`selection_id` を持つのはハイライトの会話だけ。本そのものへの質問（要約・章ごとの
+質問）は **`selection_id IS NULL`** の行で、本ごとに 1 本。所有者の列が 2 つあるのは、
+ハイライトを消したときにその会話だけが CASCADE で落ち、本の会話は残るようにするため
+（本を消せば `pdf_id` の CASCADE で全部落ちる）。本の会話を引く索引は部分索引
+`idx_chat_messages_pdf_time`（`WHERE selection_id IS NULL`）で、ハイライトの会話は 1 行も
+載らない。ハイライトの検索（`findSelections`）は `selection_id` で EXISTS を取るので、
+本の会話は構造的に混ざらない。
+
 同一性は **内容の SHA-256** で判定する。同じ本を開き直すと同じ `pdfs.id` を返しつつ、
 `fileName` / `fullText` / `pageCount` / `outline` を最新の抽出結果で**上書き**する
 (`src/server/services/pdfService.ts` の `openPdf`)。ここを「既存レコードをそのまま返す」に
@@ -476,8 +485,18 @@ be iterated…」**（ネイティブの iterator を消してから本を開く
 
 ### チャットのストリーミング
 
-`POST /api/pdf/:pdfId/selections/:selId/chats` が SSE を返す。イベントは
-`token` / `citation` / `done` / `error`。
+本は 2 種類の会話を持ち、どちらも SSE でイベントは `token` / `citation` / `done` / `error`:
+
+| 会話                       | ルート                                                |
+| -------------------------- | ----------------------------------------------------- |
+| ハイライトにぶら下がる会話 | `POST /api/pdf/:pdfId/selections/:selId/chats`        |
+| 本そのものの会話           | `POST /api/pdf/:pdfId/chats`（本文を `scope` で指定） |
+
+**配管は 1 箇所**——`src/server/services/chatStream.ts` の `streamChatReply` が、イベントの
+送り方・保存してから `done` を送ること・切断後も保存を完走させる `waitUntil` を持つ。ルートが
+持つのは履歴の読み出し・質問の保存・抜粋とプロンプトの組み立てだけ。回答の書き込みは
+`routes/pdf.ts` の `saveAnswerInto` が両ルートぶんを担う（所有者は `{ pdfId, selectionId }`
+で、本の会話は `selectionId: null`）。
 
 - クライアントは `src/front/lib/sseParser.ts` の `createSseParser` で読む。
   SSE は**空行がブロック境界**で、`event:` は同じブロックの `data:` と対にする。
@@ -489,6 +508,11 @@ be iterated…」**（ネイティブの iterator を消してから本を開く
 - 送信は **必ず `useChatStream` の `sendMessage` を通す**。ポップオーバーからの初回質問も
   `useAskAboutSelection` 経由でここに来る。生 `fetch` にすると質問文の即時表示と
   「考え中…」が出なくなる
+- **送り先は `selectionId` が決める**。`null` なら本そのものの会話
+  （`/api/pdf/:pdfId/chats`）、文字列ならハイライトの会話。本の会話には**本文の範囲を
+  `options.scope`（`PageRange[]`）で渡し**、送信 body では `{ ranges }` に包まれる
+  （`scope` を渡さない質問では `JSON.stringify` が丸ごと落とす）。範囲を作るのは
+  `src/front/lib/chatScope.ts` の `scopeRanges`（空 = 本全体 = `[{1, pageCount}]`）
 - **回答を保存できなかったときは `done` ではなく `event: error`（`CHAT_SAVE_FAILED`）を送る**。
   保存前に `done` を送ると、画面には回答が出そろっているのにリロードで消える。
   ここを `.catch(console.error)` に戻さないこと
@@ -693,36 +717,61 @@ PDF 引用は `fullText` 内の位置からページ番号を割り出してジ�
   title にする。**引用は JSON で保存される**ため、`pageMiss` は discriminated union ではなく
   任意フィールドにしてある（この列が無い既存の行も読めるようにするため）
 
-**チャットに載せる本文は全文ではなく抜粋**。選択が属する章——アップロード時に保存した
-`pdfs.outline`（トップレベル章の `{title, pageNumber}` の JSON、nullable）の開始ページで
-区切る——を送り、目次が無い本・列が NULL の既存の本は選択ページ ±10 ページ
-（`FALLBACK_WINDOW_PAGES`）の窓に落ちる。切り出しは
-`src/server/services/documentExcerpt.ts` の `selectExcerpt`（純関数。総ページ数の正は
-fullText の `\f` 区切りで、D1 の `page_count` は見ない）。守るべき不変条件が 2 つ:
+**チャットに載せる本文は全文ではなく抜粋**。抜粋の形は `DocumentExcerpt` で、本文のほかに
+**`ranges: PageRange[]`**（その本文がどのページのものか）と `isPartial` を持つ。ここは
+`src/server/services/documentExcerpt.ts` の純関数 2 本が作る。総ページ数の正はどちらも
+fullText の `\f` 区切りで、D1 の `page_count` は見ない。
 
-- **抜粋は必ず fullText の連続部分文字列**（ページを `\f` のまま繋ぐ）。ページ範囲
+| 会話             | 切り出し                                                                                               |
+| ---------------- | ------------------------------------------------------------------------------------------------------ |
+| ハイライトの会話 | `selectExcerpt(fullText, 選択ページ, outline)`——章、無ければ ±10 ページの窓（`FALLBACK_WINDOW_PAGES`） |
+| 本そのものの会話 | `selectRanges(fullText, 範囲の配列)`——読者が選んだ章のページ範囲を、クランプ・ソート・マージして切る   |
+
+章のページ範囲を解くのは **`chapterSpans(outline, totalPages)` 1 箇所**
+（`GET /api/pdf/:pdfId/chapters` がそのまま返し、`selectExcerpt` の `chapterBounds` もその
+上の `find`）。読者が選ぶ範囲と抜粋が切られる範囲が食い違わないのはこのため。守るべき
+不変条件が 3 つ:
+
+- **抜粋は必ず fullText の逐語的などこか**（ページを `\f` のまま繋ぐ）。ページ範囲
   （pages X-Y of Z）は `--- DOCUMENT START ---` マーカーの**外**にだけ書く——中に何かを
   注入すると、モデルの引用が `findPageNumber` の全文照合で見つからなくなり、出典が全部
-  `not-in-book` になる
+  `not-in-book` になる。**複数範囲でも区切りを増やさない**（`\f` のまま繋ぐ）
+- **`selectRanges` は接する範囲をマージする**。2 章続けて選べば 1 本の連続した範囲になり、
+  継ぎ目自体が消える
 - **`parseCitations` / `findPageNumber` / `locate` は従来どおり全文で照合する**。抜粋で
   照合すると、ページ番号が抜粋内の相対位置（章の 2 ページ目 = 本の 6 ページ目）にずれる
 
-抜粋が本全体と一致するとき（1 ページの本・`\f` の無い旧データ・窓が覆う小さい本）は
-プロンプトは従来の文言そのままで、「抜粋である」とは言わない。部分のときだけ「shown
-pages に無いと言い、document 全体に無いとは言わない」旨をモデルに指示する
-（`buildSystemPrompt`。`llmService.test.ts` が文言を固定している）。目次はクライアント
-（`pdfLoader` → `pdfOutline.ts` の `toStoredOutline`）がアップロード時にトップレベル章
-だけを送り、再アップロードで他のメタデータと同様に**上書き**される（目次の無い抽出は
-NULL に戻す）。**既存の本（列が NULL）は窓で動くが、リーダーで開けば後追いで章が入る**
-——表紙の後追い保存と同じ形で、`usePdfDocument` の `storeOutlineIfMissing` が、開いている
-ドキュメントから抽出した目次を `PUT /api/pdf/:pdfId/outline` に書く（本が目次を持つかは
-`GET /api/pdf/:pdfId` の `hasOutline` が言う。アップロード直後のキャッシュ先充填も
+飛び飛びの範囲では**継ぎ目をまたぐ引用**が本文に無い文になるが、フラグメント探索が最初の
+実在断片のページに着地する（モデルが言い換えた引用と同じ扱い）。プロンプト側で
+「part ごとに引用せよ」と指示している（`chatService.test.ts` の 1 本が挙動を固定）。
+**どの範囲も本の外なら本全体に落ちる**（保存されたページ数と本文の `\f` が食い違う本で、
+読めない 400 を返さないため）。
+
+抜粋が本全体と一致するとき（1 ページの本・`\f` の無い旧データ・窓が覆う小さい本・
+「本全体」を選んだとき）はプロンプトは従来の文言そのままで、「抜粋である」とは言わない。
+部分のときだけ「shown pages に無いと言い、document 全体に無いとは言わない」旨をモデルに
+指示する（`buildSystemPrompt`。`llmService.test.ts` が文言を固定している）。**複数範囲の
+ときだけ**、`Instructions:` の直後に「part ごとに引用せよ」の 1 行が増える——この位置は
+`MERMAID_RULE` より前で、文言を固定している 2 組の区間の外側。
+**ハイライトの無い質問（本そのものへの質問）では `selectedText` が `null`** で、
+`--- HIGHLIGHTED PASSAGE ---` のブロックごと出さない（無いハイライトを探させない）。
+
+目次はクライアント（`pdfLoader` → `pdfOutline.ts` の `toStoredOutline`）がアップロード時に
+トップレベル章だけを送り、再アップロードで他のメタデータと同様に**上書き**される（目次の
+無い抽出は NULL に戻す）。**既存の本（列が NULL）は窓で動くが、リーダーで開けば後追いで
+章が入る**——表紙の後追い保存と同じ形で、`usePdfDocument` の `storeOutlineIfMissing` が、
+開いているドキュメントから抽出した目次を `PUT /api/pdf/:pdfId/outline` に書く（本が目次を
+持つかは `GET /api/pdf/:pdfId` の `hasOutline` が言う。アップロード直後のキャッシュ先充填も
 この値を抽出結果から立てるので、足したばかりの本で二重に送らない）。目次の無い PDF は
 何も書かず（サーバは空の目次を 400 で拒む）、窓のまま動き続ける。
+**章の一覧が要るのは範囲メニューとサーバだけ**で、クライアントは
+`src/front/hooks/useChapters.ts` が `GET /api/pdf/:pdfId/chapters` から読む（`chapterSpans`
+と同じ目次が正なので、読者が選ぶ範囲と抜粋が食い違わない）。
 選択ページは `selections.page_number` 列から読む（ビューアが計測結果ごと送ってきた
 `pageNumber` は `positionData` の strip とは別に、この列として保存されている）。抜粋は
-(fullText, outline, 選択ページ) だけで決まる決定的な値なので、同じ会話では system prompt の
-プレフィックスが安定し、DeepSeek の prompt cache は効き続ける。
+(fullText, outline, 選択ページ) または (fullText, 範囲) だけで決まる決定的な値なので、
+同じ会話では system prompt のプレフィックスが安定し、DeepSeek の prompt cache は効き続ける
+（範囲を変えると前置きが変わるので、そこだけ効かなくなる）。
 
 全文を載せていた頃は 200 ページ級で最初のトークンまで 10 秒前後かかった。抜粋でも最初の
 トークンまで数秒待つことはあるので、ストリーミングが壊れているのと区別すること
@@ -1051,11 +1100,18 @@ move より前にスクロールへ吸われる。**44 は `HANDLE_WIDTH` 1 箇�
 上で終わるので、全高でもページ送りとシートを縮める操作は残る（`e2e/mobile.spec.ts` の
 「gives the answer the whole pane once the sheet is drawn all the way up」が両方を見る）。
 
-**シートを開く口は 3 つ**——`PageToolbar` のチャットボタン、`AppPage` の `openChat`
+**シートを開く口は 4 つ**——`PageToolbar` のチャットボタン、`AppPage` の `openChat`
 （ページ上のハイライトのタップ・一覧・URL の `?selection=` 復元がすべてここを通る。
-つまり `?selection=` 付きのリンクは狭い画面でもシートを `half` で開く）、そして
-**新しい質問の保存が成功したとき**（`useAskAboutSelection`）。half と full の
-切り替えと閉じるのは `ChatSheet` 自身の `onChange`、読み手は `AppPage` だけ。
+つまり `?selection=` 付きのリンクは狭い画面でもシートを `half` で開く）、**本について質問する**
+（`openBookChat`。入口がシートの中にあるので、押した時点で既に開いている——シートを上げる
+のは復元経路だけ）、そして**新しい質問の保存が成功したとき**（`useAskAboutSelection`）。
+half と full の切り替えと閉じるのは `ChatSheet` 自身の `onChange`、読み手は `AppPage` だけ。
+
+**狭い画面でも本そのものの会話を持つ**——`bookChatOpenAtom` はここでも保存・復元され
+（`useReadingStateSync` が送る `place` に載る）、復元はページを変えずにシートを `half` まで
+上げる。広い画面との違いは置き場所だけ（あちらはペイン、こちらはシート）。範囲メニューは
+**シート半分でも最後の章まで届く**ことを `e2e/mobile.spec.ts` の
+「asks the book itself from the sheet…」がシートの箱と突き合わせて見ている。
 
 **質問することはチャットを開くことでもある。**質問を保存できたら、狭い画面ではシートを
 `closed → half`（既に上がっているシートは動かさない。`openChat` と同じ意味論）、広い画面では
@@ -1102,6 +1158,26 @@ props のコンポーネントのまま**で、自分で持っているのは削
 `src/front/hooks/useHighlightSearch.ts` にあり、`ChatArea` がそれを呼んで
 `query` / `onQueryChange` / `onSearch` / `searched` / `searchError` と、絞り込み済みの
 `highlights` / 本の総数 `total` を props で渡す。
+
+**一覧は本そのものへの質問の入口でもある**（`onOpenBookChat`）。「本について質問する」を
+**2 つの面の両方に置く**——ハイライトが 1 つも無い案内の中と、一覧のヘッダー直下。片方だけに
+すると、ハイライトを 1 つ書いた読者から入口が消える。押すと `AppPage` の `openBookChat` が
+本の会話を開く（一覧の行と違って、押した時点でページを動かさない）。返るのは「← 一覧に戻る」。
+
+**範囲は質問ごとに選ぶ**（`src/front/components/ChatArea/ChatScopeMenu.tsx`）。会話の
+ヘッダー右端のチップで、押すと「本全体」＋章のチェックボックスが出る。状態は
+`chatScopeAtom`（`ScopeChapter[]`、空 = 本全体）で、本ごとのストアに載る。
+
+- 章の一覧は `GET /api/pdf/:pdfId/chapters`（`useChapters`）から。**クライアントで目次を
+  解き直さない**——範囲を解くのはサーバの `chapterSpans` 1 箇所
+- **最後の 1 つを外すと本全体に戻る**。「何も選んでいない」を送信できない状態にしないため
+- **「本全体」を選ぶとメニューが閉じる**。章は続けて選べるよう開いたまま（1 つ選ぶたびに
+  閉じると複数選択ができない）
+- **チップは 1 行に収める**。狭い画面のシートはヘッダー 1 行なので、`scopeLabel` は 2 つ目
+  以降を「ほか N 件」と数える。メニューは `max-h-60 overflow-y-auto` で、シート半分でも
+  スクロールして届く（**短い画面では下が見切れる**——横向きの電話など。シートを広げれば
+  収まる）
+- 目次の無い本は「この本には目次がありません」＋本全体のみ
 
 **検索の受け口は `GET /api/pdf/:pdfId/search?q=`**（`src/server/routes/pdf.ts` →
 `pdfService.ts` の `searchSelections`）。**サーバで検索するのは、チャットが本の
@@ -1332,20 +1408,25 @@ createRequest)` へ渡る。**`onProgress` は props ではない**——`ShelfP
 
 #### 読んでいた場所は本と一緒に運ぶ
 
-端末を変えても続きから読めるよう、**ページ・開いていたチャット（どのハイライトの会話か）・
-目次とチャットパネルの開閉**を D1 の `pdfs` に持たせている（`migrations/0002_add_reading_state.sql`
-が足す `last_read_page` / `last_read_selection_id` / `last_read_outline_open` と、
-`migrations/0003_add_reading_state_chat_panel.sql` が足す `last_read_chat_panel_open`。
-4 列とも nullable で、**読んでいない本には戻る場所が無い**——それはページ 1 とは違う）。
-読み出しは本そのもの（`GET /api/pdf/:pdfId` の `readingState`）に載り、書き込みは
-`PUT /api/pdf/:pdfId/reading-state`。
+端末を変えても続きから読めるよう、**ページ・開いていたチャット（ハイライトの会話か、本そのもの
+の会話か）・目次とチャットパネルの開閉**を D1 の `pdfs` に持たせている
+（`migrations/0002_add_reading_state.sql` が足す `last_read_page` / `last_read_selection_id` /
+`last_read_outline_open`、`0003_add_reading_state_chat_panel.sql` が足す
+`last_read_chat_panel_open`、`0006_add_book_chat_reading_state.sql` が足す
+`last_read_book_chat`。5 列とも nullable で、**読んでいない本には戻る場所が無い**——それは
+ページ 1 とは違う）。読み出しは本そのもの（`GET /api/pdf/:pdfId` の `readingState`）に載り、
+書き込みは `PUT /api/pdf/:pdfId/reading-state`。
 
-| 何を                                    | どこが                                                                                                                                                                  |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 保存（デバウンス 1 秒・離脱時の flush） | `src/front/hooks/useReadingStateSync.ts`                                                                                                                                |
-| 復元（本の到着待ち）                    | `src/front/hooks/useReadingLocation.ts` の `pendingRestore`                                                                                                             |
-| 保存・読み出しの service                | `src/server/services/pdfService.ts` の `saveReadingState` / `getPdf`                                                                                                    |
-| front と server が交わす形              | `src/shared/schemas/book.ts`。読み出しは `readingStateSchema`、書き込みは `saveReadingStateRequestSchema`（開閉の 2 つだけ optional）、応答は `readingStateSavedSchema` |
+| 何を                                    | どこが                                                                                                                                                                              |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 保存（デバウンス 1 秒・離脱時の flush） | `src/front/hooks/useReadingStateSync.ts`                                                                                                                                            |
+| 復元（本の到着待ち）                    | `src/front/hooks/useReadingLocation.ts` の `pendingRestore`                                                                                                                         |
+| 保存・読み出しの service                | `src/server/services/pdfService.ts` の `saveReadingState` / `getPdf`                                                                                                                |
+| front と server が交わす形              | `src/shared/schemas/book.ts`。読み出しは `readingStateSchema`、書き込みは `saveReadingStateRequestSchema`（開閉の 2 つと `bookChat` が optional）、応答は `readingStateSavedSchema` |
+
+**`bookChat` は場所の側**（`selectionId` と同じ種類）。`true` なら開いていたのは本そのものの
+会話で、**同時に立つのは 2 つのうち片方だけ**。狭い画面でも送る——あちらに畳んでおく第 2 の
+ペインが無いだけで、会話は開いている。省略された場合は保存値を保つ（パネル 2 つと同じ規則）。
 
 **場所（ページとチャット）と開閉では、誰が正かが違う。** 開閉は広い画面ならどう開いた本でも
 本が正で、到着時に保存値を当てる。場所は**URL が何も名指していないとき（＝本棚から開いたとき）
@@ -1354,6 +1435,13 @@ createRequest)` へ渡る。**`onProgress` は props ではない**——`ShelfP
 読めない値は「名指しなし」に落ち、サーバの位置が使われる。**退役パラメータは名指しに数えない**
 ので、`?panel=closed` だけを持つ古いリンクは本棚から開いたのと同じ扱いになり、ページもサーバの
 位置が使われる。
+
+**本そのものの会話は場所より開閉に近い**——URL に載らず（`?selection=` が名指せるのはハイライト
+の会話だけ）、本が届いた時点で `place.bookChat` を見て開く。ただし**URL がハイライトを名指して
+いるときは譲る**（読者がそのリンクをたどって来たのだから）。判定は `urlNamesAChat`（ref）で、
+`pendingSelectionId` は同じコミットではまだ null のため state では間に合わない。ページの規則
+（`?page=` があれば URL が正）はそのままなので、リロードでは「ページは URL から・会話はサーバ
+から」になる。
 
 復元まわりで外してはいけない点が 7 つある。**当てるのは本ごとに 1 回だけ**（`pendingRestore`）
 ——本は開いている間に何度も届く（ハイライトを保存すると SWR が本を取り直す）ので、そのたび
@@ -1374,16 +1462,18 @@ URL も書かれない（読者に見えるのは本の読み込みエラーだ�
 いない）や本自体が未読なら「開」。パネルは閉で始まるので、これが開ける唯一の口になる
 （上記「狭い画面のリーダーは 1 カラム」の atom の段落）。
 
-新しい約束を守るのは desktop の E2E 4 本（`e2e/chatbook.spec.ts` の
+新しい約束を守るのは desktop の E2E 5 本（`e2e/chatbook.spec.ts` の
 「a folded outline stays folded through a reload」「both folded panels come back when the book
 is opened from the shelf」「an old link naming the panels no longer has a say over them」
-「reloading brings back the folded panel and the chat that was open in it」）。
+「reloading brings back the folded panel and the chat that was open in it」
+「comes back to the book's own conversation when the book is opened again」）。
 
-復元が届かない経路が 1 つある。**アップロードから開いた本ではチャットだけ復元されない**
+復元が届かない経路が 1 つある。**アップロードから開いた本ではハイライトの会話だけ復元されない**
 ——`useOpenPdfBook` のキャッシュ先充填は `selections: []` なので、保存されていた
-`selectionId` を解決できないまま復元が確定する（ページと開閉は先充填の `readingState` から
-戻る）。`last_read_selection_id` に外部キーは張っていないので、別端末で消したハイライトを
-指す値も同じく一覧表示に落ち、次の保存まで残る。
+`selectionId` を解決できないまま復元が確定する（ページ・開閉・**本そのものの会話**は先充填の
+`readingState` から戻る。あちらは解決すべきハイライトを持たない）。`last_read_selection_id` に
+外部キーは張っていないので、別端末で消したハイライトを指す値も同じく一覧表示に落ち、次の保存
+まで残る。
 
 保存側は「取得」ではなく sink である。書き手はどれも複数ある——ページは `PageStepper`・
 キーボード・端のタップ・出典リンク、目次（`outlineOpenAtom`）はヘッダーのトグル・キーボード
@@ -1416,14 +1506,18 @@ is opened from the shelf」「an old link naming the panels no longer has a say 
 
 **マイグレーションを当ててから動かす**。`readPdf` / `storePdf` は drizzle が `pdfs` の全列を
 明示列挙するので、`0002_add_reading_state.sql` / `0003_add_reading_state_chat_panel.sql` /
-`0004_add_outline.sql` が未適用の D1 に新しいコードを載せると本を開く経路ごと 500 になる
-（列を絞って読む本棚一覧だけは生き残る。`saveReadingState` が落ちるのは、その列を実際に
-送ったときだけ——開閉の 2 つは省略なら `set` にも現れない。チャットは `outline` 列を
-select するので `0004` 未適用では 500）。
+`0004_add_outline.sql` / `0006_add_book_chat_reading_state.sql` が未適用の D1 に新しいコードを
+載せると本を開く経路ごと 500 になる（列を絞って読む本棚一覧だけは生き残る。
+`saveReadingState` が落ちるのは、その列を実際に送ったときだけ——開閉と `bookChat` は省略なら
+`set` にも現れない。チャットは `outline` 列を select するので `0004` 未適用では 500）。
 ローカルは `pnpm run db:migrate:local`、リモートは
 `vp build` → `wrangler d1 migrations apply chatbook-db --remote` → `pnpm run deploy` の順。
-列の追加は旧コードに無害なので、先に当てるのが常に安全。E2E は Playwright が起動時に
-適用するので影響を受けない。
+**列の追加は旧コードに無害なので、先に当てるのが常に安全——ただし `0005_book_chat.sql` だけは
+違う。** あれは `chat_messages` の作り直しで `pdf_id NOT NULL` を足すので、**旧コードは書けなく
+なる**（旧 Worker は `pdf_id` を渡さない）。窓は「migration を当てた瞬間」から「新しいコードが
+デプロイされ終わる」までで、その間に届いた回答が 1 件保存できなくなる（`CHAT_SAVE_FAILED` の帯が
+出る。データは失われない）。順番は変えられない——先にコードを出すと `pdf_id` 列が無くて同じ
+ように落ちる。E2E は Playwright が起動時に適用するので影響を受けない。
 
 キーバインド（Vim / Emacs）は `src/front/lib/keybindings.ts` の `resolveAction` に
 DOM 非依存の純粋関数として実装。`gg` や `C-c t` の2ストロークは `pending` プレフィックスで表現し、
@@ -1635,6 +1729,12 @@ Claude Code はエージェント用の worktree を `.claude/worktrees/` に作
   無関係なブラウザ側の癖。**踏んだテストだけ幅を固定する**（`e2e/chatbook.spec.ts` の
   "overshooting a line…" が既定の 1280px から 1px ずらして 1281px を指定しているのがそれ。
   ほかの実ドラッグのテストは既定幅か project の `viewport` のままでよい）
+- **ロケータの name は部分一致**——`getByRole("button", { name: "質問する" })` は
+  「**本について質問する**」にも当たる。本全体チャットの入口を足したときに実際に踏んだ:
+  質問ボックスの開閉を見ていた 1 本が「常に 1 件ある」になって落ち、**同じ名前を使っていた
+  他の 8 本は入口のボタンで通ってしまい、見張りが黙って消えた**（テストは green のまま）。
+  ポップオーバーやパネルの中のボタンを名指すときは `{ name: "...", exact: true }` を付ける。
+  ボタンのラベルを足すときは、既存の部分一致に当たらないか `rg` で確かめる
 - UI の回帰テストを足したら、**実装を壊した状態で落ちること**を必ず確認する。
   ここは「動いていないのに通る」テストが生まれやすい。例: 計測用 canvas はサイズが 0 になる
   瞬間があるため box では検出できず `display` を見る必要があった。fixture の表紙に色を敷くのも
