@@ -86,6 +86,27 @@ describe("findPageNumber", () => {
       miss: "not-in-book",
     });
   });
+
+  it("lands a quote joined across the seam of two excerpt parts on the first part's page", () => {
+    // What a question about two chapters that do not touch sends: their pages
+    // arrive one after the other with nothing between them, so a model that
+    // quotes the end of one part and the start of the next writes a passage the
+    // book does not contain. The lookup then does what it does for any reworded
+    // quote — the first fragment that is really there is the page the reader is
+    // sent to, rather than an error.
+    const firstPart =
+      "エッジの実行単位はメモリを共有しないので、状態はどこかに預ける必要があります";
+    const secondPart = "その預け先として Durable Objects を選ぶと、一貫した読み書きができます";
+    const fullText = fullTextOf("まえがき", firstPart, "あいだのページ", secondPart);
+    // The first stretch of the join is really on the first part, which is what
+    // the fragment fallback looks for once the whole quote matches nothing
+    const acrossTheSeam = firstPart.slice(-30) + secondPart.slice(0, 12);
+
+    expect(findPageNumber(acrossTheSeam, fullText, 4)).toStrictEqual({
+      found: true,
+      pageNumber: 2,
+    });
+  });
 });
 
 describe("parseCitations", () => {
