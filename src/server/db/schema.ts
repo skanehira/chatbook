@@ -19,6 +19,9 @@ export const pdfs = sqliteTable("pdfs", {
   // page.
   lastReadPage: integer("last_read_page"),
   lastReadSelectionId: text("last_read_selection_id"),
+  // Whether that conversation was the book's own. At most one of the two is
+  // set; both null is a place with no conversation open on it.
+  lastReadBookChat: integer("last_read_book_chat", { mode: "boolean" }),
   lastReadOutlineOpen: integer("last_read_outline_open", { mode: "boolean" }),
   lastReadChatPanelOpen: integer("last_read_chat_panel_open", { mode: "boolean" }),
 });
@@ -37,9 +40,16 @@ export const selections = sqliteTable("selections", {
 
 export const chatMessages = sqliteTable("chat_messages", {
   id: text("id").primaryKey(),
-  selectionId: text("selection_id")
+  // Null for the book's own conversation, which hangs off no passage. A
+  // highlight's conversation still goes with the highlight: deleting it takes
+  // the messages, while the book's own outlive every highlight in it.
+  selectionId: text("selection_id").references(() => selections.id, { onDelete: "cascade" }),
+  // Which book the message belongs to. Carried on every row rather than read
+  // through the highlight, so a conversation about the book itself has one
+  // place to hang from and deleting the book takes all of them.
+  pdfId: text("pdf_id")
     .notNull()
-    .references(() => selections.id, { onDelete: "cascade" }),
+    .references(() => pdfs.id, { onDelete: "cascade" }),
   role: text("role").notNull(),
   content: text("content").notNull(),
   citations: text("citations"),

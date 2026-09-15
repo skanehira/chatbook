@@ -786,11 +786,12 @@ describe("DELETE /api/pdf/:pdfId", () => {
     // Seeded directly: POST .../chats streams from DeepSeek over SSE, which is far
     // more machinery than this cascade check needs.
     await env.DB.prepare(
-      "INSERT INTO chat_messages (id, selection_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO chat_messages (id, selection_id, pdf_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
       .bind(
         "chat-delete-book",
         selection.id,
+        book.id,
         "user",
         "この選択について教えて",
         "2026-01-01T00:00:00Z",
@@ -1051,9 +1052,16 @@ describe("DELETE /api/pdf/:pdfId/selections/:selId", () => {
     ).json()) as { id: string };
 
     await env.DB.prepare(
-      "INSERT INTO chat_messages (id, selection_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO chat_messages (id, selection_id, pdf_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
-      .bind(`msg-${tag}`, created.id, "user", "この選択について教えて", "2026-01-01T00:00:00Z")
+      .bind(
+        `msg-${tag}`,
+        created.id,
+        book.id,
+        "user",
+        "この選択について教えて",
+        "2026-01-01T00:00:00Z",
+      )
       .run();
 
     return { book, selectionId: created.id };
@@ -1140,11 +1148,12 @@ describe("GET /api/pdf/:pdfId/search", () => {
     ).json()) as { id: string };
 
     await env.DB.prepare(
-      "INSERT INTO chat_messages (id, selection_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO chat_messages (id, selection_id, pdf_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
       .bind(
         `msg-${tag}`,
         inAnswer.id,
+        book.id,
         "assistant",
         "状態を持てないのは Workers が毎回別のインスタンスになるためです",
         "2026-01-01T00:00:00Z",
@@ -1314,6 +1323,7 @@ describe("PUT /api/pdf/:pdfId/reading-state", () => {
     const response = await putReadingState(book.id, {
       page: 3,
       selectionId: "sel-roundtrip",
+      bookChat: false,
       outlineOpen: false,
       chatPanelOpen: false,
     });
@@ -1323,6 +1333,7 @@ describe("PUT /api/pdf/:pdfId/reading-state", () => {
     expect(await readingStateOf(book.id)).toStrictEqual({
       page: 3,
       selectionId: "sel-roundtrip",
+      bookChat: false,
       outlineOpen: false,
       chatPanelOpen: false,
     });
@@ -1338,6 +1349,7 @@ describe("PUT /api/pdf/:pdfId/reading-state", () => {
     expect(await readingStateOf(book.id)).toStrictEqual({
       page: 4,
       selectionId: null,
+      bookChat: null,
       outlineOpen: null,
       chatPanelOpen: null,
     });
@@ -1349,11 +1361,12 @@ describe("PUT /api/pdf/:pdfId/reading-state", () => {
     expect(await readingStateOf(book.id)).toBeNull();
   });
 
-  it("keeps the outline and panel a wide screen chose when a narrow one saves without them", async () => {
+  it("keeps the outline, panel and chat a wide screen chose when a narrow one saves without them", async () => {
     const book = await uploadBook({ tag: "place-narrow", fileName: "narrow.pdf" });
     await putReadingState(book.id, {
       page: 2,
       selectionId: null,
+      bookChat: true,
       outlineOpen: true,
       chatPanelOpen: false,
     });
@@ -1361,9 +1374,12 @@ describe("PUT /api/pdf/:pdfId/reading-state", () => {
     const response = await putReadingState(book.id, { page: 5, selectionId: null });
 
     expect(response.status).toBe(200);
+    // A device that says nothing about the conversation keeps the one that was
+    // open: the book's own is part of the place, not of the panels.
     expect(await readingStateOf(book.id)).toStrictEqual({
       page: 5,
       selectionId: null,
+      bookChat: true,
       outlineOpen: true,
       chatPanelOpen: false,
     });
@@ -1390,6 +1406,7 @@ describe("PUT /api/pdf/:pdfId/reading-state", () => {
     await putReadingState(book.id, {
       page: 7,
       selectionId: "sel-reopen",
+      bookChat: false,
       outlineOpen: false,
       chatPanelOpen: false,
     });
@@ -1402,12 +1419,14 @@ describe("PUT /api/pdf/:pdfId/reading-state", () => {
     expect(reopened.readingState).toStrictEqual({
       page: 7,
       selectionId: "sel-reopen",
+      bookChat: false,
       outlineOpen: false,
       chatPanelOpen: false,
     });
     expect(await readingStateOf(book.id)).toStrictEqual({
       page: 7,
       selectionId: "sel-reopen",
+      bookChat: false,
       outlineOpen: false,
       chatPanelOpen: false,
     });

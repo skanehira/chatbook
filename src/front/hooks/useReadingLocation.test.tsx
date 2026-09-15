@@ -365,7 +365,13 @@ describe("useReadingLocation resuming where another device left off", () => {
 
     await act(async () =>
       view.rerender({
-        book: bookLeftAt({ page: 17, selectionId: "a2", outlineOpen: null, chatPanelOpen: null }),
+        book: bookLeftAt({
+          page: 17,
+          selectionId: "a2",
+          bookChat: null,
+          outlineOpen: null,
+          chatPanelOpen: null,
+        }),
       }),
     );
 
@@ -388,7 +394,13 @@ describe("useReadingLocation resuming where another device left off", () => {
 
     await act(async () =>
       view.rerender({
-        book: bookLeftAt({ page: 4, selectionId: null, outlineOpen: null, chatPanelOpen: null }),
+        book: bookLeftAt({
+          page: 4,
+          selectionId: null,
+          bookChat: null,
+          outlineOpen: null,
+          chatPanelOpen: null,
+        }),
       }),
     );
 
@@ -401,7 +413,13 @@ describe("useReadingLocation resuming where another device left off", () => {
 
   it("keeps the page a shared link names over the one the server remembers", async () => {
     const { store, view } = renderAt(`/books/${PDF_ID}?page=5`, {
-      book: bookLeftAt({ page: 17, selectionId: null, outlineOpen: null, chatPanelOpen: null }),
+      book: bookLeftAt({
+        page: 17,
+        selectionId: null,
+        bookChat: null,
+        outlineOpen: null,
+        chatPanelOpen: null,
+      }),
     });
 
     await waitFor(() =>
@@ -418,7 +436,13 @@ describe("useReadingLocation resuming where another device left off", () => {
     act(() => view.result.current.setCurrentPage(9));
     await act(async () =>
       view.rerender({
-        book: bookLeftAt({ page: 17, selectionId: null, outlineOpen: null, chatPanelOpen: null }),
+        book: bookLeftAt({
+          page: 17,
+          selectionId: null,
+          bookChat: null,
+          outlineOpen: null,
+          chatPanelOpen: null,
+        }),
       }),
     );
 
@@ -439,6 +463,7 @@ describe("useReadingLocation resuming where another device left off", () => {
           ...bookLeftAt({
             page: BOOK.pageCount + 1,
             selectionId: null,
+            bookChat: null,
             outlineOpen: null,
             chatPanelOpen: null,
           }),
@@ -457,6 +482,7 @@ describe("useReadingLocation resuming where another device left off", () => {
         book: bookLeftAt({
           page: 17,
           selectionId: "deleted",
+          bookChat: null,
           outlineOpen: null,
           chatPanelOpen: null,
         }),
@@ -474,7 +500,13 @@ describe("useReadingLocation resuming where another device left off", () => {
 
   it("follows the passage a text-fragment link names rather than the saved page", async () => {
     const { store } = renderAt(`/books/${PDF_ID}`, {
-      book: bookLeftAt({ page: 17, selectionId: null, outlineOpen: null, chatPanelOpen: null }),
+      book: bookLeftAt({
+        page: 17,
+        selectionId: null,
+        bookChat: null,
+        outlineOpen: null,
+        chatPanelOpen: null,
+      }),
       linkedPassage: A_PASSAGE,
       locatePassage: async () => ({ found: true, pageNumber: 88 }) as const,
     });
@@ -487,7 +519,13 @@ describe("useReadingLocation resuming where another device left off", () => {
 
     await act(async () =>
       view.rerender({
-        book: bookLeftAt({ page: 17, selectionId: null, outlineOpen: false, chatPanelOpen: null }),
+        book: bookLeftAt({
+          page: 17,
+          selectionId: null,
+          bookChat: null,
+          outlineOpen: false,
+          chatPanelOpen: null,
+        }),
       }),
     );
 
@@ -503,7 +541,13 @@ describe("useReadingLocation resuming where another device left off", () => {
     // here the drawer stays shut, so `false` is the restore having been skipped
     await act(async () =>
       view.rerender({
-        book: bookLeftAt({ page: 17, selectionId: null, outlineOpen: true, chatPanelOpen: null }),
+        book: bookLeftAt({
+          page: 17,
+          selectionId: null,
+          bookChat: null,
+          outlineOpen: true,
+          chatPanelOpen: null,
+        }),
       }),
     );
 
@@ -516,7 +560,13 @@ describe("useReadingLocation resuming where another device left off", () => {
 
     await act(async () =>
       view.rerender({
-        book: bookLeftAt({ page: 17, selectionId: null, outlineOpen: null, chatPanelOpen: null }),
+        book: bookLeftAt({
+          page: 17,
+          selectionId: null,
+          bookChat: null,
+          outlineOpen: null,
+          chatPanelOpen: null,
+        }),
       }),
     );
 
@@ -531,7 +581,13 @@ describe("useReadingLocation resuming where another device left off", () => {
 
     await act(async () =>
       view.rerender({
-        book: bookLeftAt({ page: 17, selectionId: null, outlineOpen: null, chatPanelOpen: null }),
+        book: bookLeftAt({
+          page: 17,
+          selectionId: null,
+          bookChat: null,
+          outlineOpen: null,
+          chatPanelOpen: null,
+        }),
       }),
     );
 
@@ -546,7 +602,13 @@ describe("useReadingLocation resuming where another device left off", () => {
 
     await act(async () =>
       view.rerender({
-        book: bookLeftAt({ page: 17, selectionId: null, outlineOpen: null, chatPanelOpen: null }),
+        book: bookLeftAt({
+          page: 17,
+          selectionId: null,
+          bookChat: null,
+          outlineOpen: null,
+          chatPanelOpen: null,
+        }),
       }),
     );
 
@@ -565,6 +627,7 @@ describe("useReadingLocation restoring the panels the book was left with", () =>
   const OUTLINE_UP_CHAT_AWAY = {
     page: 17,
     selectionId: null,
+    bookChat: null,
     outlineOpen: true,
     chatPanelOpen: false,
   } as const;
@@ -674,6 +737,7 @@ describe("useReadingLocation restoring the panels the book was left with", () =>
     const chatUpOutlineAway = {
       page: 17,
       selectionId: null,
+      bookChat: null,
       outlineOpen: false,
       chatPanelOpen: true,
     } as const;

@@ -381,7 +381,13 @@ describe("AppPage", () => {
   it("opens with the panel folded away when that is how the book was left", async () => {
     const foldedAway: BookDetail = {
       ...BOOK_A,
-      readingState: { page: 1, selectionId: null, outlineOpen: null, chatPanelOpen: false },
+      readingState: {
+        page: 1,
+        selectionId: null,
+        bookChat: null,
+        outlineOpen: null,
+        chatPanelOpen: false,
+      },
     };
     renderReader(BOOK_A.id, { [bookKey(BOOK_A.id)]: foldedAway });
 

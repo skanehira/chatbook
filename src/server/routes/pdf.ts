@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { ResultAsync } from "neverthrow";
 import { pdfs, selections, chatMessages } from "../db/schema";
 import {
@@ -18,7 +18,7 @@ import {
 
 import { buildSystemPrompt, resolveLlmConfig } from "../services/llmService";
 import { findPageNumber, readCitations } from "../services/chatService";
-import { streamChatReply } from "../services/chatStream";
+import { streamChatReply, type SaveAnswer } from "../services/chatStream";
 import {
   bookOutlineSchema,
   locateQuerySchema,
@@ -29,10 +29,15 @@ import {
   createSelectionRequestSchema,
   selectionSearchQuerySchema,
 } from "../../shared/schemas/selection";
-import { sendChatRequestSchema } from "../../shared/schemas/chat";
+import { sendBookChatRequestSchema, sendChatRequestSchema } from "../../shared/schemas/chat";
 import type { ErrorCode } from "../../shared/schemas/error";
 import { storageFailure, type ServiceError } from "../services/serviceError";
-import { readStoredOutline, selectExcerpt } from "../services/documentExcerpt";
+import {
+  chapterSpans,
+  readStoredOutline,
+  selectExcerpt,
+  selectRanges,
+} from "../services/documentExcerpt";
 import { validate } from "./validation";
 
 type Env = {
@@ -86,6 +91,52 @@ function serviceFailureResponse(
   return failure.type === "NOT_FOUND"
     ? c.json({ error: missing }, 404)
     : storageFailureResponse(c, failure.cause);
+}
+
+/**
+ * The save half of a chat stream: one row per finished answer.
+ *
+ * Both conversations a book has store their turns the same way and differ only
+ * in what the row hangs off, so the write lives here rather than twice in the
+ * two routes. The id is minted from the same clock the question's row was, and
+ * a write that failed is logged and reported as `null` — the stream turns that
+ * into the error event, since an answer on screen that is not stored is gone
+ * the next time the conversation is opened.
+ */
+function saveAnswerInto(
+  db: D1Database,
+  idClock: IdClock,
+  owner: { pdfId: string; selectionId: string | null },
+): SaveAnswer {
+  const d1Db = drizzle(db);
+
+  return async (answer, citations, usage) => {
+    const assistantMsgId = idClock.newId();
+    const saved = await ResultAsync.fromPromise(
+      d1Db
+        .insert(chatMessages)
+        .values({
+          id: assistantMsgId,
+          selectionId: owner.selectionId,
+          pdfId: owner.pdfId,
+          role: "assistant",
+          content: answer,
+          citations: JSON.stringify(citations),
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cachedInputTokens: usage.cachedInputTokens,
+          createdAt: idClock.now(),
+        })
+        .run(),
+      storageFailure,
+    );
+
+    if (saved.isErr()) {
+      console.error("Failed to save assistant message:", saved.error.cause);
+      return null;
+    }
+    return { messageId: assistantMsgId };
+  };
 }
 
 /** A WebP file is a RIFF container whose form type, at offset 8, is "WEBP". */
@@ -340,6 +391,24 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
 
         return c.json({ stored: true });
       })
+      // The chapters a question can be aimed at, each with the pages it covers.
+      // Worked out here rather than by the reader, so that what the menu offers
+      // and what an excerpt is cut by come from one outline. The page count is
+      // the stored column the reader's own copy of the book carries; a text
+      // whose page breaks disagree is clamped when the ranges are cut.
+      .get("/pdf/:pdfId/chapters", async (c) => {
+        const d1Db = drizzle(c.env.DB);
+        const pdf = await d1Db
+          .select({ pageCount: pdfs.pageCount, outline: pdfs.outline })
+          .from(pdfs)
+          .where(eq(pdfs.id, c.req.param("pdfId")))
+          .get();
+        if (!pdf) {
+          return c.json({ error: PDF_NOT_FOUND }, 404);
+        }
+
+        return c.json({ chapters: chapterSpans(readStoredOutline(pdf.outline), pdf.pageCount) });
+      })
       .get("/pdf/:pdfId/file", async (c) => {
         const pdfId = c.req.param("pdfId");
         const d1Db = drizzle(c.env.DB);
@@ -477,6 +546,103 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
 
         return c.json({ id, selectedText, pageNumber, positionData, createdAt: now }, 201);
       })
+      // The book's own conversation: the one hanging off the book rather than
+      // off a passage of it, and so the only one with no selection to name.
+      .get("/pdf/:pdfId/chats", async (c) => {
+        const pdfId = c.req.param("pdfId");
+        const d1Db = drizzle(c.env.DB);
+
+        const pdf = await d1Db.select({ id: pdfs.id }).from(pdfs).where(eq(pdfs.id, pdfId)).get();
+        if (!pdf) {
+          return c.json({ error: PDF_NOT_FOUND }, 404);
+        }
+
+        const messages = await d1Db
+          .select()
+          .from(chatMessages)
+          .where(and(eq(chatMessages.pdfId, pdfId), isNull(chatMessages.selectionId)))
+          .orderBy(asc(chatMessages.createdAt), asc(chatMessages.id))
+          .all();
+
+        return c.json({
+          selectionId: null,
+          messages: messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            citations: readCitations(m.citations),
+            createdAt: m.createdAt,
+          })),
+        });
+      })
+      // Ask the book itself, over the pages the reader picked. The question
+      // hangs off the book rather than off a passage of it, so nothing is
+      // highlighted under it: what it is about is the scope it arrived with.
+      .post("/pdf/:pdfId/chats", validate("json", sendBookChatRequestSchema), async (c) => {
+        const pdfId = c.req.param("pdfId");
+        const d1Db = drizzle(c.env.DB);
+        const llmConfig = resolveLlmConfig(c.env);
+
+        if (!llmConfig.apiKey) {
+          return c.json(
+            {
+              error: {
+                code: "CONFIG_ERROR" satisfies ErrorCode,
+                message: "LLM_API_KEY not set",
+              },
+            },
+            500,
+          );
+        }
+
+        const pdfRow = await d1Db
+          .select({ fullText: pdfs.fullText, pageCount: pdfs.pageCount })
+          .from(pdfs)
+          .where(eq(pdfs.id, pdfId))
+          .get();
+        if (!pdfRow) {
+          return c.json({ error: PDF_NOT_FOUND }, 404);
+        }
+
+        const { content, useWebSearch: readerWantsWebSearch, scope } = c.req.valid("json");
+        const useWebSearch = readerWantsWebSearch && llmConfig.webSearchSupported;
+
+        // Read before the question is saved, so the conversation the model is
+        // handed holds the earlier turns and not this one twice.
+        const history = await d1Db
+          .select()
+          .from(chatMessages)
+          .where(and(eq(chatMessages.pdfId, pdfId), isNull(chatMessages.selectionId)))
+          .orderBy(asc(chatMessages.createdAt), asc(chatMessages.id))
+          .all();
+
+        await d1Db.insert(chatMessages).values({
+          id: idClock.newId(),
+          selectionId: null,
+          pdfId,
+          role: "user",
+          content,
+          createdAt: idClock.now(),
+        });
+
+        // The pages picked, cut out of the book. Citations are still resolved
+        // against the whole of it, so a passage quoted from one of them is
+        // found on the page the book itself numbers it by.
+        const excerpt = selectRanges(pdfRow.fullText, scope.ranges);
+        const systemPrompt = buildSystemPrompt(excerpt, null, useWebSearch);
+
+        return streamChatReply({
+          llmConfig,
+          systemPrompt,
+          history: history.map((turn) => ({ role: turn.role, content: turn.content })),
+          question: content,
+          useWebSearch,
+          fullText: pdfRow.fullText,
+          pageCount: pdfRow.pageCount,
+          save: saveAnswerInto(c.env.DB, idClock, { pdfId, selectionId: null }),
+          waitUntil: (work) => c.executionCtx.waitUntil(work),
+        });
+      })
       .get("/pdf/:pdfId/selections/:selId/chats", async (c) => {
         const selId = c.req.param("selId");
         const d1Db = drizzle(c.env.DB);
@@ -571,6 +737,7 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
           await d1Db.insert(chatMessages).values({
             id: userMsgId,
             selectionId: selId,
+            pdfId: sel.pdfId,
             role: "user",
             content,
             createdAt: now,
@@ -611,32 +778,7 @@ export function createPdfRoute(idClock: IdClock = systemIdClock) {
             useWebSearch,
             fullText,
             pageCount: pdfRow.pageCount,
-            save: async (answer, citations, usage) => {
-              const assistantMsgId = idClock.newId();
-              const saved = await ResultAsync.fromPromise(
-                d1Db
-                  .insert(chatMessages)
-                  .values({
-                    id: assistantMsgId,
-                    selectionId: selId,
-                    role: "assistant",
-                    content: answer,
-                    citations: JSON.stringify(citations),
-                    inputTokens: usage.inputTokens,
-                    outputTokens: usage.outputTokens,
-                    cachedInputTokens: usage.cachedInputTokens,
-                    createdAt: idClock.now(),
-                  })
-                  .run(),
-                storageFailure,
-              );
-
-              if (saved.isErr()) {
-                console.error("Failed to save assistant message:", saved.error.cause);
-                return null;
-              }
-              return { messageId: assistantMsgId };
-            },
+            save: saveAnswerInto(c.env.DB, idClock, { pdfId: sel.pdfId, selectionId: selId }),
             waitUntil: (work) => c.executionCtx.waitUntil(work),
           });
         },

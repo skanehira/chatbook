@@ -204,10 +204,13 @@ async function seedTurnsWrittenOutOfOrder(
   ];
 
   for (const turn of turns) {
+    // The book is taken from the highlight the row hangs off, so the seed needs
+    // no book of its own to name
     await env.DB.prepare(
-      "INSERT INTO chat_messages (id, selection_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+      `INSERT INTO chat_messages (id, selection_id, pdf_id, role, content, created_at)
+       SELECT ?, ?, pdf_id, ?, ?, ? FROM selections WHERE id = ?`,
     )
-      .bind(turn.id, selectionId, turn.role, turn.content, turn.createdAt)
+      .bind(turn.id, selectionId, turn.role, turn.content, turn.createdAt, selectionId)
       .run();
   }
 
@@ -531,11 +534,12 @@ describe("POST /api/pdf/:pdfId/selections/:selId/chats", () => {
   it("still serves a conversation holding an answer whose stored citations cannot be read", async () => {
     const { pdfId, selectionId } = await createSelection("chat-broken-citations");
     await env.DB.prepare(
-      "INSERT INTO chat_messages (id, selection_id, role, content, citations, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO chat_messages (id, selection_id, pdf_id, role, content, citations, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
       .bind(
         "chat-broken-citations-answer",
         selectionId,
+        pdfId,
         "assistant",
         "エッジで動きます",
         "{not json",

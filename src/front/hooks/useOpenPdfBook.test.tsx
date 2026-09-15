@@ -22,6 +22,7 @@ const FULL_TEXT = "エッジはサーバーレス実行基盤です。";
 const SAVED_PLACE = {
   page: 87,
   selectionId: "01JSEL",
+  bookChat: false,
   outlineOpen: false,
   chatPanelOpen: false,
 };
