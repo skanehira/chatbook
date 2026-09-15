@@ -1505,6 +1505,53 @@ test("the chat panel lists the highlights, opens one, and comes back to the list
   await expect(chatPanel.getByPlaceholder("質問を入力...")).toBeHidden();
 });
 
+// MOCK: the book's own conversation has no server side yet — the answer is
+// canned and nothing is stored, so this covers the screen only. It is the
+// ground the real endpoint's test will be written on.
+test("asks the book itself, aiming the question at chapters of its table of contents", async ({
+  page,
+}) => {
+  await openTestBook(page);
+  const chatPanel = page.locator("main > div").last();
+
+  // Nothing is marked in this book, so the list offers both ways to start
+  const entry = chatPanel.getByRole("button", { name: "本について質問する" });
+  await expect(entry).toBeVisible({ timeout: 60000 });
+  await entry.click();
+
+  // The book's own conversation: no passage under it, and the scope where the
+  // quoted passage would otherwise sit
+  await expect(chatPanel.getByRole("button", { name: "範囲: 本全体" })).toBeVisible();
+
+  // The chapters are the book's own table of contents, with the pages each one
+  // covers worked out from the next chapter's start
+  await chatPanel.getByRole("button", { name: "範囲: 本全体" }).click();
+  await expect(chatPanel.getByText("第2章 チャットとの連携")).toBeVisible();
+  await expect(chatPanel.getByText("9〜12ページ")).toBeVisible();
+  await expect(chatPanel.getByText("冒頭")).toBeVisible();
+
+  await chatPanel.getByRole("checkbox", { name: /第2章 チャットとの連携/ }).click();
+  await expect(
+    chatPanel.getByRole("button", { name: "範囲: 第2章 チャットとの連携" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await chatPanel.getByPlaceholder("質問を入力...").fill("この章を要約して");
+  await chatPanel.getByRole("button", { name: "送信" }).click();
+
+  // The canned answer names the scope it was asked under, which until the
+  // server side exists is the only way to see the scope took effect at all.
+  await expect(
+    chatPanel.getByText(/※モック回答（対象: 第2章 チャットとの連携（9〜12ページ））/),
+  ).toBeVisible({ timeout: 30000 });
+  await expect(chatPanel.getByText("この章を要約して")).toBeVisible();
+
+  // And the way back leaves the book's conversation for the list
+  await chatPanel.getByRole("button", { name: "一覧に戻る" }).click();
+  await expect(chatPanel.getByText("チャットを開始するには")).toBeVisible();
+  await expect(chatPanel.getByRole("button", { name: "本について質問する" })).toBeVisible();
+});
+
 test("searching the list narrows it to what the server matched", async ({ page }) => {
   // The chats are searched too, but only the server can see them: an answer
   // cannot be saved from here without a live model, so the passage is what this

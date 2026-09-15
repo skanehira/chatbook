@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router";
 import { citedPassageAtom, currentPageAtom, outlineOpenAtom } from "../atoms/pdfAtom";
 import {
   activeSelectionAtom,
+  bookChatOpenAtom,
   chatMessagesAtom,
   chatErrorAtom,
   chatMaximizedAtom,
@@ -76,6 +77,7 @@ export function AppPage() {
 function BookReader({ pdfId }: { pdfId: string | undefined }) {
   const { data: book, error } = useBook(pdfId);
   const [, setActiveSelection] = useAtom(activeSelectionAtom);
+  const setBookChatOpen = useSetAtom(bookChatOpenAtom);
   const [, setChatMessages] = useAtom(chatMessagesAtom);
   const [, setChatError] = useAtom(chatErrorAtom);
   const [, setCurrentPage] = useAtom(currentPageAtom);
@@ -107,6 +109,9 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
     async (selection: ActiveSelection) => {
       // An answer still streaming belongs to the chat being left behind
       abortChatStream();
+      // One panel, two kinds of conversation: the passage's wins over the
+      // book's, and opening one is leaving the other behind.
+      setBookChatOpen(false);
       setActiveSelection(selection);
       // Otherwise the conversation left behind shows under the new passage
       // until its own history arrives
@@ -139,12 +144,42 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
       isNarrow,
       pdfId,
       setActiveSelection,
+      setBookChatOpen,
       setChatError,
       setChatMessages,
       setChatSheet,
       setCitedPassage,
     ],
   );
+
+  /**
+   * Put the book's own conversation on screen: the same panel, showing what the
+   * reader asks about the work rather than about a passage of it.
+   *
+   * MOCK: unlike `openChat` this reads no history — there is nothing stored to
+   * read until the server side exists, and the thread lives in the atoms for as
+   * long as the book is open. The rest — leaving the other conversation behind,
+   * clearing what belonged to it, drawing the sheet up on one column — is what
+   * the real one will do, so that what is being judged is the real screen.
+   */
+  const openBookChat = useCallback(() => {
+    abortChatStream();
+    setActiveSelection(null);
+    setBookChatOpen(true);
+    setChatMessages([]);
+    setChatError(null);
+    setCitedPassage(null);
+    if (isNarrow) setChatSheet((sheet) => (sheet === "closed" ? "half" : sheet));
+  }, [
+    abortChatStream,
+    isNarrow,
+    setActiveSelection,
+    setBookChatOpen,
+    setChatError,
+    setChatMessages,
+    setChatSheet,
+    setCitedPassage,
+  ]);
 
   const { passageMiss, locationReady } = useReadingLocation(
     pdfId,
@@ -305,6 +340,7 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
               book={book}
               bookError={error as Error | undefined}
               onSelectionClick={handleSelectionClick}
+              onOpenBookChat={openBookChat}
             />
           </ChatSheet>
         )}
@@ -380,6 +416,7 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
                 book={book}
                 bookError={error as Error | undefined}
                 onSelectionClick={handleSelectionClick}
+                onOpenBookChat={openBookChat}
               />
             </div>
           </>

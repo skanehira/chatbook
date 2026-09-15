@@ -30,6 +30,24 @@ interface HighlightListPanelProps {
   onSelect: (selection: ActiveSelection) => void;
   /** Removes a highlight and its chat; its failure comes back in the value. */
   onDelete: (selectionId: string) => ResultAsync<void, ApiError>;
+  /** Opens the conversation about the book itself, which no highlight holds. */
+  onOpenBookChat: () => void;
+}
+
+/**
+ * The way in to a conversation that hangs off the book rather than a passage.
+ *
+ * Offered on both faces of the panel: a reader who has marked nothing yet is
+ * told to select text, and the one thing they may have wanted instead is to ask
+ * about the book — while a reader with a list in front of them should not have
+ * to mark something first to ask what a chapter was about.
+ */
+function BookChatEntry({ onClick, className }: { onClick: () => void; className: string }) {
+  return (
+    <button type="button" onClick={onClick} className={className}>
+      本について質問する
+    </button>
+  );
 }
 
 /** Enough of a passage to tell one delete button from another. */
@@ -55,6 +73,7 @@ export function HighlightListPanel({
   searchError,
   onSelect,
   onDelete,
+  onOpenBookChat,
 }: HighlightListPanelProps) {
   const [pendingDeletion, setPendingDeletion] = useState<HighlightListItem | null>(null);
   /** Why the last deletion did not happen, worded here for the reader. */
@@ -80,6 +99,10 @@ export function HighlightListPanel({
         <div className="text-center">
           <p className="text-gray-500 text-sm font-medium mb-1">チャットを開始するには</p>
           <p className="text-gray-400 text-sm">PDF内のテキストを選択して質問してください</p>
+          <BookChatEntry
+            onClick={onOpenBookChat}
+            className="mt-4 cursor-pointer rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+          />
         </div>
       </div>
     );
@@ -92,6 +115,10 @@ export function HighlightListPanel({
       <h2 className="px-4 py-3 border-b border-gray-200 text-sm font-medium text-gray-600 shrink-0">
         {searched ? `ハイライト ${total}件中 ${highlights.length}件` : `ハイライト ${total}件`}
       </h2>
+      <BookChatEntry
+        onClick={onOpenBookChat}
+        className="shrink-0 cursor-pointer border-b border-gray-200 px-4 py-2 text-left text-sm text-blue-600 hover:bg-gray-50"
+      />
       {/* One row, so the list still has room to read in a sheet drawn half way up. */}
       <div className="flex shrink-0 items-center gap-2 border-b border-gray-200 px-4 py-2">
         <input

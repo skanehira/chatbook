@@ -12,6 +12,7 @@ import {
 } from "../../../test/streamingFetchStub";
 import {
   activeSelectionAtom,
+  bookChatOpenAtom,
   chatAbortControllerAtom,
   chatMessagesAtom,
   isStreamingAtom,
@@ -78,6 +79,9 @@ function renderChat(
     deleteHighlight?: DeleteHighlight;
     /** Stands in for the search endpoint, which looks through the chats too. */
     searchHighlights?: SearchSelections;
+    /** Opens the panel on the book's own conversation rather than a passage's. */
+    bookChatOpen?: boolean;
+    onOpenBookChat?: () => void;
   } = {},
 ) {
   const {
@@ -86,10 +90,13 @@ function renderChat(
     messages = [],
     deleteHighlight,
     searchHighlights,
+    bookChatOpen = false,
+    onOpenBookChat = () => {},
   } = options;
   const book = bookError ? undefined : BOOK;
   const store = createStore();
   store.set(activeSelectionAtom, activeSelection);
+  store.set(bookChatOpenAtom, bookChatOpen);
   store.set(chatMessagesAtom, messages);
 
   // Stands in for a drag over the thread: jsdom lays no text out and has no
@@ -107,6 +114,7 @@ function renderChat(
           book={book}
           bookError={bookError}
           onSelectionClick={(selection) => opened.push(selection)}
+          onOpenBookChat={onOpenBookChat}
           readQuote={() => selected}
           deleteHighlight={deleteHighlight}
           searchHighlights={searchHighlights}
@@ -220,6 +228,27 @@ describe("ChatArea", () => {
     await userEvent.click(screen.getByText(OTHER_TEXT));
 
     expect(opened).toStrictEqual([{ id: "s2", selectedText: OTHER_TEXT, pageNumber: 7 }]);
+  });
+
+  it("takes the offer to ask about the book itself, off the list", async () => {
+    let opened = 0;
+    renderChat({ activeSelection: null, onOpenBookChat: () => (opened += 1) });
+
+    await userEvent.click(screen.getByRole("button", { name: "本について質問する" }));
+
+    expect(opened).toBe(1);
+  });
+
+  it("shows the book's own conversation with the scope it will be asked under and no passage quoted", () => {
+    // The third face: no highlight under it, so no quote box — what the
+    // question is aimed at is the scope chip instead.
+    renderChat({ activeSelection: null, bookChatOpen: true });
+
+    expect(screen.getByRole("button", { name: "一覧に戻る" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "範囲: 本全体" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("質問を入力...")).toBeInTheDocument();
+    expect(screen.queryByText("↳")).toBeNull();
+    expect(screen.queryByText("チャットを開始するには")).toBeNull();
   });
 
   it("narrows the list to what the server says holds the query, chats included", async () => {

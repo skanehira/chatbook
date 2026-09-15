@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vite-plus/test";
+import { describe, it, expect, vi } from "vite-plus/test";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
@@ -35,6 +35,8 @@ const ACCEPTS_EVERY_DELETION = () => okAsync(undefined);
 interface PanelOverrides {
   onSelect?: (selection: ActiveSelection) => void;
   onDelete?: (selectionId: string) => ResultAsync<void, ApiError>;
+  /** Opens the conversation about the book itself, which no highlight holds. */
+  onOpenBookChat?: () => void;
   /** The narrowed list, when the test is standing in for a search that ran. */
   shown?: HighlightListItem[];
   query?: string;
@@ -57,6 +59,7 @@ function panel(highlights: HighlightListItem[], overrides: PanelOverrides = {}) 
       searchError={overrides.searchError}
       onSelect={overrides.onSelect ?? (() => {})}
       onDelete={overrides.onDelete ?? ACCEPTS_EVERY_DELETION}
+      onOpenBookChat={overrides.onOpenBookChat ?? (() => {})}
     />
   );
 }
@@ -108,6 +111,27 @@ describe("HighlightListPanel", () => {
 
     expect(screen.getByText("チャットを開始するには")).toBeInTheDocument();
     expect(screen.getByText("PDF内のテキストを選択して質問してください")).toBeInTheDocument();
+  });
+
+  it("offers the book itself to ask about where there is no passage to pick", async () => {
+    const opened = vi.fn();
+    renderPanel([], { onOpenBookChat: opened });
+
+    await userEvent.click(screen.getByRole("button", { name: "本について質問する" }));
+
+    expect(opened).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps offering the book itself above a list that already has highlights", async () => {
+    const opened = vi.fn();
+    renderPanel([OLDER, NEWER], { onOpenBookChat: opened });
+
+    await userEvent.click(screen.getByRole("button", { name: "本について質問する" }));
+
+    expect(opened).toHaveBeenCalledTimes(1);
+    // The way in is added above the list rather than in place of it.
+    expect(screen.getByText(OLDER.selectedText)).toBeInTheDocument();
+    expect(screen.getByText("ハイライト 2件")).toBeInTheDocument();
   });
 
   it("passes what the reader types to whoever runs the search", async () => {

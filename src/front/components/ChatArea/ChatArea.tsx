@@ -6,19 +6,27 @@ import {
   isStreamingAtom,
   activeSelectionAtom,
   chatErrorAtom,
+  chatAbortControllerAtom,
   abortChatStreamAtom,
   selectionDeletedAtom,
+  bookChatOpenAtom,
+  chatScopeAtom,
+  chatFaceAtom,
   type ActiveSelection,
 } from "../../atoms/chatAtom";
+import { outlineChaptersAtom } from "../../atoms/pdfAtom";
 import type { BookDetail } from "../../../shared/schemas/book";
+import type { ChatMessage } from "../../../shared/schemas/chat";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatInput } from "./ChatInput";
+import { ChatScopeMenu } from "./ChatScopeMenu";
 import { HighlightListPanel } from "./HighlightListPanel";
 import { useWebSearchAtom } from "../../atoms/settingsAtom";
 import { useChatStream } from "../../hooks/useChatStream";
 import { useHighlights, type DeleteHighlight } from "../../hooks/useHighlights";
 import { useHighlightSearch, type SearchSelections } from "../../hooks/useHighlightSearch";
 import { formatQuotedQuestion } from "../../lib/quotedQuestion";
+import { mockBookReply } from "../../lib/bookChatMock";
 import type { ReadChatQuote } from "../../lib/chatQuoteSelection";
 
 interface ChatAreaProps {
@@ -27,6 +35,8 @@ interface ChatAreaProps {
   /** Why the book could not be read, if it could not. */
   bookError?: Error;
   onSelectionClick: (selection: ActiveSelection) => void;
+  /** Opens the conversation about the book itself, which no highlight holds. */
+  onOpenBookChat: () => void;
   /** Reads what a drag over the thread selected; injectable for tests. */
   readQuote?: ReadChatQuote;
   /** Removes a highlight; injectable so tests can record or refuse one. */
@@ -48,11 +58,16 @@ export function ChatArea({
   book,
   bookError,
   onSelectionClick,
+  onOpenBookChat,
   readQuote,
   deleteHighlight,
   searchHighlights,
 }: ChatAreaProps) {
   const [activeSelection, setActiveSelection] = useAtom(activeSelectionAtom);
+  const setBookChatOpen = useSetAtom(bookChatOpenAtom);
+  const [scope, setScope] = useAtom(chatScopeAtom);
+  const chapters = useAtomValue(outlineChaptersAtom);
+  const face = useAtomValue(chatFaceAtom);
   const { highlights, removeHighlight } = useHighlights(book?.id, undefined, deleteHighlight);
   const { query, setQuery, submit, matchedIds, searchError } = useHighlightSearch(
     book?.id,
@@ -60,9 +75,13 @@ export function ChatArea({
   );
   const selectionDeleted = useSetAtom(selectionDeletedAtom);
   const messages = useAtomValue(chatMessagesAtom);
+  const setMessages = useSetAtom(chatMessagesAtom);
   const streamingContent = useAtomValue(streamingContentAtom);
+  const setStreamingContent = useSetAtom(streamingContentAtom);
   const isStreaming = useAtomValue(isStreamingAtom);
+  const setIsStreaming = useSetAtom(isStreamingAtom);
   const chatError = useAtomValue(chatErrorAtom);
+  const setAbortController = useSetAtom(chatAbortControllerAtom);
   const useWebSearch = useAtomValue(useWebSearchAtom);
   const abortChatStream = useSetAtom(abortChatStreamAtom);
 
@@ -71,22 +90,79 @@ export function ChatArea({
   /** A passage of this thread the next question is about, if one was picked. */
   const [quote, setQuote] = useState<string | null>(null);
 
+  // The highlight is the passage the question is about, and it is the reader's
+  // to leave behind; the book's own conversation has none. Resolved here rather
+  // than read off `activeSelection` below, so the branches agree with the face.
+  const selection = face === "highlight" ? activeSelection : null;
+  /** Which thread a quote was taken out of, for the reset below. */
+  const thread = face === "book" ? "book" : (selection?.id ?? null);
+
   // A quote is a passage of the conversation it was taken from, so opening
   // another one leaves it behind. Adjusted during the render that brings the
   // new thread in, so the input never shows the old quote under it.
-  const [quotedFrom, setQuotedFrom] = useState(activeSelection?.id);
-  if (activeSelection?.id !== quotedFrom) {
-    setQuotedFrom(activeSelection?.id);
+  const [quotedFrom, setQuotedFrom] = useState(thread);
+  if (thread !== quotedFrom) {
+    setQuotedFrom(thread);
     setQuote(null);
   }
 
+  /**
+   * MOCK: the book's own conversation has no endpoint yet, so the answer is
+   * canned and nothing is stored — the thread is gone on reload. It is driven
+   * through the same atoms the real stream writes, and stopped by the same
+   * `abortChatStreamAtom`, so what is being judged here is the real screen.
+   * Deleted with `bookChatMock`, in favour of
+   * `sendMessage(book.id, null, question, useWebSearch, scope)`.
+   */
+  const askTheBook = (question: string, pageCount: number) => {
+    abortChatStream();
+    const controller = new AbortController();
+    setAbortController(controller);
+    setIsStreaming(true);
+    setStreamingContent("");
+
+    const stamped = (role: ChatMessage["role"], content: string): ChatMessage => ({
+      id: `temp-${role}-${Date.now()}`,
+      role,
+      content,
+      citations: null,
+      createdAt: new Date().toISOString(),
+    });
+    setMessages((previous) => [...previous, stamped("user", question)]);
+
+    mockBookReply({
+      question,
+      scope,
+      pageCount,
+      signal: controller.signal,
+      onToken: (token) => setStreamingContent((previous) => previous + token),
+      onDone: (answer) => {
+        setMessages((previous) => [...previous, stamped("assistant", answer)]);
+        setStreamingContent("");
+        setIsStreaming(false);
+        setAbortController(null);
+      },
+    });
+  };
+
   const handleSend = async (content: string) => {
-    if (!book || !activeSelection) return;
+    if (!book || face === "list") return;
     // The quote rides inside the message: the thread is stored as content and
     // nothing beside it would survive a reload or reach the model.
     const question = quote === null ? content : formatQuotedQuestion(quote, content);
     setQuote(null);
-    await sendMessage(book.id, activeSelection.id, question, useWebSearch);
+
+    if (selection !== null) {
+      await sendMessage(book.id, selection.id, question, useWebSearch);
+      return;
+    }
+    askTheBook(question, book.pageCount);
+  };
+
+  const backToList = () => {
+    abortChatStream();
+    if (face === "book") setBookChatOpen(false);
+    else setActiveSelection(null);
   };
 
   if (bookError && !book) {
@@ -109,7 +185,7 @@ export function ChatArea({
     );
   }
 
-  if (!activeSelection) {
+  if (face === "list") {
     return (
       <HighlightListPanel
         highlights={matchedIds ? highlights.filter((h) => matchedIds.has(h.id)) : highlights}
@@ -123,23 +199,29 @@ export function ChatArea({
         // Leaving the chat is the store's to decide once the server answers:
         // the reader can have opened one while the request was in flight.
         onDelete={(id) => removeHighlight(book.id, id).map(() => selectionDeleted(id))}
+        onOpenBookChat={onOpenBookChat}
       />
     );
   }
 
   return (
     <div className="flex flex-col h-full bg-white">
-      <div className="px-2 py-2 border-b border-gray-200 shrink-0">
+      <div className="flex items-center px-2 py-2 border-b border-gray-200 shrink-0">
         <button
           type="button"
-          onClick={() => {
-            abortChatStream();
-            setActiveSelection(null);
-          }}
+          onClick={backToList}
           className="cursor-pointer rounded px-2 py-1 text-sm text-blue-600 hover:bg-gray-50"
         >
           <span aria-hidden="true">←</span> 一覧に戻る
         </button>
+        {face === "book" && (
+          <ChatScopeMenu
+            chapters={chapters}
+            pageCount={book.pageCount}
+            scope={scope}
+            onChange={setScope}
+          />
+        )}
       </div>
       <ChatMessageList
         messages={messages}
@@ -152,7 +234,7 @@ export function ChatArea({
       <ChatInput
         onSend={handleSend}
         disabled={isStreaming}
-        quotedText={quote ?? activeSelection.selectedText}
+        quotedText={selection === null ? quote : (quote ?? selection.selectedText)}
         onClearQuote={quote === null ? undefined : () => setQuote(null)}
       />
     </div>

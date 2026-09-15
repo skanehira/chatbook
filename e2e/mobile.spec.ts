@@ -177,6 +177,33 @@ test("gives the answer the whole pane once the sheet is drawn all the way up", a
   await expect(page.getByRole("button", { name: "チャットを縮める" })).toBeVisible();
 });
 
+// MOCK: the book's own conversation is screen-only for now — see the desktop
+// spec for what that covers. This one is about the sheet: what is drawn half
+// way up a phone is the least room the chapter menu will ever be given.
+test("asks the book itself from the sheet, with the chapters within reach of it", async ({
+  page,
+}) => {
+  await openTestBook(page);
+
+  await page.getByRole("button", { name: "チャット" }).tap();
+  const sheet = page.getByRole("region", { name: "チャット" });
+  await sheet.getByRole("button", { name: "本について質問する" }).tap();
+
+  // Opened from the sheet, the conversation takes it over rather than a second
+  // one being drawn: the toolbar's chat button is still the way back.
+  await expect(sheet.getByRole("button", { name: "範囲: 本全体" })).toBeVisible();
+
+  await sheet.getByRole("button", { name: "範囲: 本全体" }).tap();
+  const sheetBox = (await sheet.boundingBox())!;
+  const lastChapter = (await sheet.getByText("9〜12ページ").boundingBox())!;
+  expect(lastChapter.y + lastChapter.height).toBeLessThanOrEqual(sheetBox.y + sheetBox.height);
+
+  await sheet.getByRole("checkbox", { name: /第1章 テキストレイヤーの検証/ }).tap();
+  await expect(
+    sheet.getByRole("button", { name: "範囲: 第1章 テキストレイヤーの検証" }),
+  ).toBeVisible();
+});
+
 test("offers to ask about a passage, and puts the question box up on request", async ({ page }) => {
   await openTestBook(page);
 
