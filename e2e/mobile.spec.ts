@@ -188,9 +188,10 @@ test("gives the answer the whole pane once the sheet is drawn all the way up", a
   await expect(page.getByRole("button", { name: "チャットを縮める" })).toBeVisible();
 });
 
-// MOCK: the book's own conversation is screen-only for now — see the desktop
-// spec for what that covers. This one is about the sheet: what is drawn half
-// way up a phone is the least room the chapter menu will ever be given.
+// What the desktop spec's test of the same name does not cover: this one is
+// about the sheet, since what is drawn half way up a phone is the least room
+// the chapter menu will ever be given. Nothing here is sent, so no model is
+// asked for an answer.
 test("asks the book itself from the sheet, with the chapters within reach of it", async ({
   page,
 }) => {

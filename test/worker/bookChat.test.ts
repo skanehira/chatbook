@@ -289,6 +289,14 @@ describe("GET /api/pdf/:pdfId/chats", () => {
   });
 });
 
+/** How many turns of any conversation the book is left holding. */
+async function countTurns(pdfId: string): Promise<number> {
+  const row = await env.DB.prepare("SELECT COUNT(*) AS count FROM chat_messages WHERE pdf_id = ?")
+    .bind(pdfId)
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
 describe("POST /api/pdf/:pdfId/chats", () => {
   const PICKED_CHAPTER = { ranges: [{ startPage: 5, endPage: 8 }] };
   const WHOLE_BOOK = { ranges: [{ startPage: 1, endPage: 12 }] };
@@ -425,9 +433,21 @@ describe("POST /api/pdf/:pdfId/chats", () => {
     );
   });
 
-  it("hands the model the book's earlier turns rather than starting over", async () => {
+  it("hands the model the book's earlier turns and none of a highlight's", async () => {
     const pdfId = await createBook("book-chat-history");
+    const selectionId = await addSelection(pdfId);
     await seedTurn(pdfId, "earlier", "assistant", "前の答えです", "2026-01-01T00:00:00.000Z");
+    // A conversation of the other kind on the same book: what a question about
+    // a passage said has no business riding in front of a question about the
+    // work, and the two are told apart by the column the highlight names.
+    await seedTurn(
+      pdfId,
+      "highlight-earlier",
+      "user",
+      "選んだ箇所について",
+      "2026-01-01T00:00:01.000Z",
+      selectionId,
+    );
     let conversation: { role: string; content: string }[] = [];
     server.use(
       http.post(`${LLM_BASE}/chat/completions`, async ({ request }) => {
@@ -504,6 +524,38 @@ describe("POST /api/pdf/:pdfId/chats", () => {
     expect(await response.json()).toStrictEqual({
       error: { code: "VALIDATION_ERROR", message: "Invalid request body: scope.ranges.0.endPage" },
     });
+  });
+
+  it("keeps the book's own conversation when a highlight goes, and loses it with the book", async () => {
+    // What the two owners on a message are for: deleting a passage takes the
+    // conversation about it and nothing else, while the book's own is the
+    // reader's until they delete the book.
+    const pdfId = await createBook("book-chat-deletion");
+    const selectionId = await addSelection(pdfId);
+    await seedTurn(pdfId, "about-the-book", "user", "本について", "2026-01-01T00:00:00.000Z");
+    await seedTurn(
+      pdfId,
+      "about-the-passage",
+      "user",
+      "箇所について",
+      "2026-01-01T00:00:01.000Z",
+      selectionId,
+    );
+
+    const removed = await apiFetch(
+      `https://example.com/api/pdf/${pdfId}/selections/${selectionId}`,
+      { method: "DELETE" },
+    );
+
+    expect(removed.status).toBe(200);
+    expect((await readBookChat(pdfId)).map((message) => message.content)).toStrictEqual([
+      "本について",
+    ]);
+
+    const deleted = await apiFetch(`https://example.com/api/pdf/${pdfId}`, { method: "DELETE" });
+
+    expect(deleted.status).toBe(200);
+    expect(await countTurns(pdfId)).toBe(0);
   });
 
   it("asks about the whole book when every page picked is outside it", async () => {
