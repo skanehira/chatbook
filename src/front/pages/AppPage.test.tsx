@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vite-plus/test";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
 import { SWRConfig } from "swr";
@@ -96,6 +96,8 @@ function readerFetchStub({
   chatHistory = [],
   /** What the book's own conversation holds when it is opened. */
   bookChatHistory = [],
+  /** Leaves the book's own conversation unanswered until the test releases it. */
+  holdBookChat = false,
 }: {
   holdTheBook?: boolean;
   refuseChatHistoryFor?: string;
@@ -104,8 +106,10 @@ function readerFetchStub({
   refuseReadingStateSave?: boolean;
   chatHistory?: ChatMessage[];
   bookChatHistory?: ChatMessage[];
+  holdBookChat?: boolean;
 } = {}) {
   const urls: string[] = [];
+  let answerBookChat: (() => void) | null = null;
   // Every caller here reaches the network through `fetcher`, which is only
   // ever handed a url string.
   const fetchFn = (url: string) => {
@@ -136,11 +140,16 @@ function readerFetchStub({
       // The book's own conversation is reached without a highlight in the path,
       // and is named as such in the answer.
       if (!url.includes("/selections/")) {
-        return Promise.resolve(
+        const answering = () =>
           new Response(JSON.stringify({ selectionId: null, messages: bookChatHistory }), {
             status: 200,
-          }),
-        );
+          });
+
+        return holdBookChat
+          ? new Promise<Response>((resolve) => {
+              answerBookChat = () => resolve(answering());
+            })
+          : Promise.resolve(answering());
       }
       const selectionId = url.split("/selections/")[1].split("/")[0];
       const refused = selectionId === refuseChatHistoryFor;
@@ -156,7 +165,12 @@ function readerFetchStub({
     }
     return Promise.resolve(new Response(null, { status: 404 }));
   };
-  return { urls, fetchFn };
+  return {
+    urls,
+    fetchFn,
+    /** Answers the book's own conversation where it was held back. */
+    answerBookChat: () => answerBookChat?.(),
+  };
 }
 
 /**
@@ -208,9 +222,10 @@ function renderReader(
     search?: string;
     chatHistory?: ChatMessage[];
     bookChatHistory?: ChatMessage[];
+    holdBookChat?: boolean;
   } = {},
 ) {
-  const { urls, fetchFn } = readerFetchStub(options);
+  const { urls, fetchFn, answerBookChat } = readerFetchStub(options);
   vi.stubGlobal("fetch", fetchFn);
 
   render(
@@ -228,7 +243,11 @@ function renderReader(
       </SWRConfig>
     </SwrTestCache>,
   );
-  return { urls };
+  return {
+    urls,
+    /** Answers the book's own conversation where it was held back. */
+    answerBookChat: () => answerBookChat?.(),
+  };
 }
 
 describe("AppPage", () => {
@@ -330,6 +349,30 @@ describe("AppPage", () => {
     // And not the answers to a passage the reader has just stepped away from.
     expect(screen.queryByText(AN_ANSWER.content)).toBeNull();
     expect(screen.getByRole("button", { name: "範囲: 本全体" })).toBeInTheDocument();
+  });
+
+  it("keeps a conversation that answers late out of the one the reader has opened since", async () => {
+    // Both are a round trip away, and the reader can be quicker than the one
+    // they walked away from: an answer written under the passage they moved to
+    // would show them another conversation's words as this one's.
+    const { urls, answerBookChat } = renderReader(
+      BOOK_A.id,
+      { [bookKey(BOOK_A.id)]: BOOK_A },
+      { bookChatHistory: [BOOK_ANSWER], chatHistory: [AN_ANSWER], holdBookChat: true },
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "本について質問する" }));
+    // Asked for, and left hanging: this is the answer the reader walks away
+    // from before it comes back.
+    await waitFor(() => expect(urls).toContain(`/api/pdf/${BOOK_A.id}/chats`));
+    await userEvent.click(screen.getByRole("button", { name: "一覧に戻る" }));
+    await userEvent.click(screen.getByText(A_PASSAGE));
+    expect(await screen.findByText(AN_ANSWER.content)).toBeInTheDocument();
+
+    await act(async () => answerBookChat());
+
+    expect(screen.getByText(AN_ANSWER.content)).toBeInTheDocument();
+    expect(screen.queryByText(BOOK_ANSWER.content)).toBeNull();
   });
 
   it("says a linked passage is not in the book rather than only that it was not found", async () => {

@@ -119,6 +119,17 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
   }, [abortChatStream, isNarrow, setChatError, setChatMessages, setChatSheet, setCitedPassage]);
 
   /**
+   * Which conversation the panel is waiting on, so one that answers late does
+   * not land in another.
+   *
+   * A history takes a round trip to arrive, and the reader can open a second
+   * conversation before the first one answers — off the list, off the page, or
+   * back into the book's own. Whoever asked last is the only one whose answer
+   * is still wanted.
+   */
+  const conversationRef = useRef(0);
+
+  /**
    * Read a conversation in, whichever of the two it is.
    *
    * An empty conversation and one that could not be read used to look the same,
@@ -126,7 +137,9 @@ function BookReader({ pdfId }: { pdfId: string | undefined }) {
    */
   const loadConversation = useCallback(
     async (url: string) => {
+      const generation = ++conversationRef.current;
       const history = await resultFetcher(url, chatHistorySchema);
+      if (generation !== conversationRef.current) return;
 
       history.match(
         (data) => setChatMessages(data.messages),
