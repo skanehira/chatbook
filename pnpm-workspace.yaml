@@ -24,7 +24,7 @@ overrides:
 catalog:
   vite: npm:@voidzero-dev/vite-plus-core@0.2.4
   vitest: 4.1.11
-  vite-plus: 0.2.4
+  vite-plus: 1.1.0
 peerDependencyRules:
   allowAny:
     - vite
