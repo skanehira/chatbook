@@ -22,7 +22,7 @@ importers:
     dependencies:
       '@hono/zod-validator':
         specifier: ^0.9.0
-        version: 0.9.0(hono@4.13.7)(zod@4.4.3)
+        version: 0.9.0(hono@4.13.7)(zod@4.6.6)
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@cloudflare/workers-types@5.20260711.1)
@@ -43,7 +43,7 @@ importers:
         version: 8.2.0
       openai:
         specifier: ^5.23.2
-        version: 5.23.2(ws@8.21.1)(zod@4.4.3)
+        version: 5.23.2(ws@8.21.1)(zod@4.6.6)
       pdfjs-dist:
         specifier: ^6.2.108
         version: 6.2.108
@@ -75,8 +75,8 @@ importers:
         specifier: ^3.0.2
         version: 3.0.2
       zod:
-        specifier: ^4.4.3
-        version: 4.4.3
+        specifier: ^4.6.6
+        version: 4.6.6
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.48.0
@@ -3456,8 +3456,8 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.6.6:
+    resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
 
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
@@ -3769,10 +3769,10 @@ snapshots:
     optionalDependencies:
       '@noble/hashes': 1.8.0
 
-  '@hono/zod-validator@0.9.0(hono@4.13.7)(zod@4.4.3)':
+  '@hono/zod-validator@0.9.0(hono@4.13.7)(zod@4.6.6)':
     dependencies:
       hono: 4.13.7
-      zod: 4.4.3
+      zod: 4.6.6
 
   '@iconify/types@2.0.0': {}
 
@@ -5830,10 +5830,10 @@ snapshots:
 
   obug@2.1.3: {}
 
-  openai@5.23.2(ws@8.21.1)(zod@4.4.3):
+  openai@5.23.2(ws@8.21.1)(zod@4.6.6):
     optionalDependencies:
       ws: 8.21.1
-      zod: 4.4.3
+      zod: 4.6.6
 
   outvariant@1.4.3: {}
 
@@ -6524,6 +6524,6 @@ snapshots:
 
   zod@3.25.76: {}
 
-  zod@4.4.3: {}
+  zod@4.6.6: {}
 
   zwitch@2.0.4: {}
